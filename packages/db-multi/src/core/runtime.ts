@@ -164,7 +164,7 @@ function openDatabase(input: Config, { driver, onSpan, pooler = "verified", repl
   const lifecycle = createLifecycle(config.tenantMaxInflight);
   const withTenant = createWithTenant(pools, { get: placement }, lifecycle, guard);
   /** `src/queries/tenant/` read queries go to a replica; see `docs/replicas.md`. */
-  const withTenantRead = createWithTenantRead(pools, { get: placement }, replicaRouter, onUnavailable, lifecycle, guard);
+  const withTenantRead = createWithTenantRead(pools, { get: placement }, replicaRouter, onUnavailable, lifecycle, guard, config.causalWaitMs);
   /** Replica status (health, lag, availability); probes without consulting the cache. Contains no URL. */
   const replicas = () => replicaRouter.report(config.nodes.map((node) => node.id));
   /** `src/queries/platform/` queries: the platform database (db0, schema `platform`). */

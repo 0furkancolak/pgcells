@@ -1,5 +1,7 @@
 # Replica Read Path Implementation Plan (C1)
 
+> **Durum (2026-10-19): uygulandı (replika okuma yolu); bölge yerelliği F4'te eklendi.** Onay kutuları işaretlenmedi; gerçek durumun kaynağı koddur, testlerdir ve [yol haritası](2026-10-18-roadmap-remaining.md)dır.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Salt okunur sorgular açık bir okuma bağlamıyla (`db.withTenantRead`, `RequestDb.tenantRead`) replica'dan okunur; replica sağlığı/lag önbellekli yoklanır, düşme politikası (`primary` | `error`) ve aynı istekte yazıdan sonra okumanın primary'de kalması çalışır.

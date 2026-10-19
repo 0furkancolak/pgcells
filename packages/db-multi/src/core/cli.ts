@@ -46,11 +46,19 @@ export type CliOptions = MigrationRunOptions & {
   safetyPoint?: string;
   org?: string;
   check?: string;
+  verify?: string;
   appRegion?: string;
   region?: string;
   zone?: string;
   label?: string[];
   unlabel?: string[];
+  targetRps?: number;
+  readPercent?: number;
+  perProcessRps?: number;
+  perCellRps?: number;
+  utilizationPercent?: number;
+  tenantsPerCell?: number;
+  tenantCount?: number;
   appInstances?: number;
   poolMax?: number;
   poolers?: number;
@@ -78,6 +86,9 @@ type Switches = {
   fromReplica?: boolean;
   noTls?: boolean;
   allowCrossRegion?: boolean;
+  noReplicas?: boolean;
+  online?: boolean;
+  sourceUrl?: boolean;
 };
 type Options = CliOptions & Switches;
 interface Command {
@@ -95,9 +106,10 @@ interface Command {
 const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
 const usage = (message: string) => new AppError("USAGE", message);
 const MIGRATION_FLAGS = ["--dry-run", "--db", "--concurrency", "--per-db-concurrency", "--continue-on-error"];
-const BOOLEAN_FLAGS = ["--dry-run", "--demo", "--ts", "--continue-on-error", "--writers-drained", "--from-url", "--pgbouncer-url", "--pooled-urls", "--full", "--from-replica", "--no-tls", "--allow-cross-region"];
+const BOOLEAN_FLAGS = ["--dry-run", "--demo", "--ts", "--continue-on-error", "--writers-drained", "--from-url", "--pgbouncer-url", "--pooled-urls", "--full", "--from-replica", "--no-tls", "--allow-cross-region", "--no-replicas", "--online", "--source-url"];
 /** URLs that carry a password are not put in argv (readable via `ps`); they are asked for with hidden input: [ask-secret.ts](tools/ask-secret.ts). */
 const SOURCE_URL_QUESTION = "Source DB URL (postgres://…, input is hidden): ";
+const TARGET_SIDE_URL_QUESTION = "Source DB URL as the TARGET server reaches it (postgres://…, a direct connection, input is hidden): ";
 const PGBOUNCER_URL_QUESTION = "PgBouncer console URL (postgres://…/pgbouncer, input is hidden): ";
 const askUrl = async (question: string, subject: string) => {
   const { askSecret, postgresUrl } = await import("./tools/ask-secret");
@@ -149,6 +161,13 @@ const INTEGER_FLAGS: Record<string, number> = {
   "--capacity": 1_000_000,
   "--keep": 1000,
   "--batch-size": 10000,
+  "--target-rps": 1_000_000_000,
+  "--read-percent": 100,
+  "--per-process-rps": 100_000_000,
+  "--per-cell-rps": 100_000_000,
+  "--utilization-percent": 100,
+  "--tenants-per-cell": 1_000_000,
+  "--tenant-count": 1_000_000_000,
   "--instances": 1_000_000,
   "--pool-max": 100,
   "--poolers": 1000,
@@ -294,6 +313,16 @@ const commands: Record<string, Command> = {
       const result = await (await import("./tools/replicas")).replicaReport(app);
       if (!result.ok) process.exitCode = 1;
       return result;
+    },
+  },
+  "cell promote": {
+    usage: "<dbN> --to K",
+    summary: "Read-only plan for promoting replica K of dbN to primary: checks (reachable, standby, identity, lag, timeouts, is the old primary still up) and the steps. It promotes nothing; exit code 1 if a check blocks",
+    flags: ["--to"],
+    run: async ({ app, options }, databaseId) => {
+      const plan = await (await import("./tools/promote")).promotePlan(app, databaseId, Number(options.to));
+      if (!plan.ok) process.exitCode = 1;
+      return plan;
     },
   },
   "replica set": {
@@ -560,6 +589,27 @@ const commands: Record<string, Command> = {
       return pullSchema(app, schema, { databaseId: options.databaseIds?.[0], scope: options.scope, name: options.name, exclude: options.exclude });
     },
   },
+  "capacity plan": {
+    usage: "--target-rps N --per-process-rps N --per-cell-rps N [--read-percent 0-100] [--utilization-percent 1-100] [--tenant-count N --tenants-per-cell N] [--no-replicas]",
+    summary:
+      "How many app instances, cells and replicas a target load needs, from throughput you measured (no database needed). --read-percent: share of statements that may go to replicas (default 0); --utilization-percent: peak load to plan for (default 60)",
+    flags: ["--target-rps", "--per-process-rps", "--per-cell-rps", "--read-percent", "--utilization-percent", "--tenant-count", "--tenants-per-cell", "--no-replicas"],
+    local: async (options) => {
+      const missing = (["targetRps", "perProcessRps", "perCellRps"] as const).filter((key) => options[key] === undefined);
+      if (missing.length) throw usage(`capacity plan needs ${missing.join(", ")} (flags: --target-rps, --per-process-rps, --per-cell-rps)`);
+      const { capacityPlan } = await import("./tools/capacity-plan");
+      return capacityPlan({
+        targetRps: options.targetRps as number,
+        perProcessRps: options.perProcessRps as number,
+        perCellRps: options.perCellRps as number,
+        readShare: (options.readPercent ?? 0) / 100,
+        utilization: (options.utilizationPercent ?? 60) / 100,
+        tenants: options.tenantCount,
+        tenantsPerCell: options.tenantsPerCell,
+        replicasAllowed: !options.noReplicas,
+      });
+    },
+  },
   "pooler plan": {
     usage: "--instances N --pool-max N --poolers N --default-pool-size N --max-client-conn N --max-connections N",
     summary:
@@ -650,11 +700,17 @@ const commands: Record<string, Command> = {
     },
   },
   move: {
-    usage: "<tenant> <databaseId> --writers-drained [--allow-cross-region]",
-    summary: "Moves a tenant (example: abc db1); a move to a database in another region needs --allow-cross-region, and never leaves the tenant's residency zone",
-    flags: ["--writers-drained", "--allow-cross-region"],
-    run: async ({ app, options }, tenant, databaseId) =>
-      (await move()).startMove(app, tenant, databaseId, options.writersDrained, (started) => print({ moveId: started.id }), { allowCrossRegion: options.allowCrossRegion }),
+    usage: "<tenant> <databaseId> (--writers-drained | --online [--verify auto|counts|none]) [--allow-cross-region]",
+    summary:
+      "Moves a tenant (example: abc db1). Offline by default: stop the writers and pass --writers-drained. --online keeps the tenant writable (logical replication; asks for the source URL as the target server reaches it, with hidden input) and pauses writes only for the final catch-up. A move to another region needs --allow-cross-region and never leaves the tenant's residency zone",
+    flags: ["--writers-drained", "--allow-cross-region", "--online", "--verify"],
+    run: async ({ app, options }, tenant, databaseId) => {
+      if (options.online && options.verify !== undefined && !["auto", "counts", "none"].includes(options.verify)) throw usage("--verify must be auto, counts or none");
+      const online = options.online
+        ? { sourceUrlForTarget: await askUrl(TARGET_SIDE_URL_QUESTION, "Source database URL"), verify: options.verify as "auto" | "counts" | "none" | undefined }
+        : undefined;
+      return (await move()).startMove(app, tenant, databaseId, options.writersDrained, (started) => print({ moveId: started.id }), { allowCrossRegion: options.allowCrossRegion, online });
+    },
   },
   "move-status": {
     usage: "<moveId>",
@@ -662,17 +718,23 @@ const commands: Record<string, Command> = {
     run: async ({ app }, id) => (await move()).getMove(app, id),
   },
   "resume-move": {
-    usage: "<moveId> --writers-drained",
-    summary: "Resumes a half-finished move",
-    flags: ["--writers-drained"],
-    run: async ({ app, options }, id) => (await move()).resumeMove(app, id, options.writersDrained),
+    usage: "<moveId> [--writers-drained] [--source-url]",
+    summary:
+      "Resumes a half-finished move (an offline one needs --writers-drained; an online one does not, and needs --source-url, with hidden input, only if its subscription was not created yet)",
+    flags: ["--writers-drained", "--source-url"],
+    run: async ({ app, options }, id) => {
+      const record = await (await move()).getMove(app, id);
+      const sourceUrlForTarget = options.sourceUrl ? await askUrl(TARGET_SIDE_URL_QUESTION, "Source database URL") : undefined;
+      return (await move()).resumeMove(app, id, options.writersDrained, { online: record.online, sourceUrlForTarget });
+    },
   },
   "rollback-move": {
-    usage: "<moveId> --writers-drained",
-    summary: "Rolls back a move that stopped before the DB switch",
+    usage: "<moveId> [--writers-drained]",
+    summary: "Rolls back a move that stopped before the DB switch (an offline move needs --writers-drained; an online one also removes its replication objects)",
     flags: ["--writers-drained"],
     run: async ({ app, options }, id) => {
-      await (await move()).rollbackMove(app, id, options.writersDrained);
+      const record = await (await move()).getMove(app, id);
+      await (await move()).rollbackMove(app, id, options.writersDrained, { online: record.online });
       return { rolledBack: true };
     },
   },
@@ -695,7 +757,7 @@ ${Object.entries(commands).map(helpLine).join("\n")}
 Options (migrate, migrate-all, seed-all): --dry-run, --db db0,db1, --concurrency N (total), --per-db-concurrency N,
   --continue-on-error (continue with the other tenants after an error). An option value is given as --name value or --name=value.
 
-move, resume-move and rollback-move require --writers-drained, which confirms that the writers have been stopped (docs/operations.md#tenant-move).
+An offline move, resume-move and rollback-move require --writers-drained, which confirms that the writers have been stopped; move --online does not (docs/operations.md#tenant-move).
 Environment: DATABASE_URLS (required; direct or session-pooling connections; the first URL is the platform DB, or name the nodes: db0=url,db1=url).
 Driver: --driver (default bun). See the README for detailed setup.`;
 

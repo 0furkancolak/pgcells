@@ -1,5 +1,7 @@
 # Advanced SQL E2: Sorgu Yapıları Implementation Plan
 
+> **Durum (2026-10-19): uygulandı.** Onay kutuları işaretlenmedi; gerçek durumun kaynağı koddur, testlerdir ve [yol haritası](2026-10-18-roadmap-remaining.md)dır.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** `WITH RECURSIVE`, `INTERSECT`/`EXCEPT` (`ALL` dahil), `IS [NOT] DISTINCT FROM`, pencere çerçevesi ve `GROUPING SETS`/`ROLLUP`/`CUBE`/`grouping()` uygulama sorgularında derlenir ve gerçek PostgreSQL'de çalışır.

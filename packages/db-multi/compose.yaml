@@ -59,6 +59,19 @@ services:
       - './src/core/local/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro'
     depends_on: [toxiproxy]
     healthcheck: {test: ['CMD-SHELL', 'nc -z 127.0.0.1 6432'], interval: 2s, timeout: 2s, retries: 30}
+  # Online-move tests only (logical replication needs wal_level=logical on both sides): a publisher and a subscriber that can reach each other by service name.
+  postgres-lr-a:
+    image: postgres:16.15-alpine
+    environment: {POSTGRES_DB: app, POSTGRES_USER: admin, POSTGRES_PASSWORD: local_admin_password}
+    command: [postgres, -c, wal_level=logical, -c, max_replication_slots=16, -c, max_wal_senders=16, -c, max_logical_replication_workers=8, -c, max_worker_processes=16]
+    ports: ['127.0.0.1:5601:5432']
+    healthcheck: {test: ['CMD-SHELL', 'pg_isready -U admin -d app'], interval: 2s, timeout: 2s, retries: 30}
+  postgres-lr-b:
+    image: postgres:16.15-alpine
+    environment: {POSTGRES_DB: app, POSTGRES_USER: admin, POSTGRES_PASSWORD: local_admin_password}
+    command: [postgres, -c, wal_level=logical, -c, max_replication_slots=16, -c, max_wal_senders=16, -c, max_logical_replication_workers=8, -c, max_worker_processes=16]
+    ports: ['127.0.0.1:5602:5432']
+    healthcheck: {test: ['CMD-SHELL', 'pg_isready -U admin -d app'], interval: 2s, timeout: 2s, retries: 30}
 volumes:
   postgres0:
   postgres1:

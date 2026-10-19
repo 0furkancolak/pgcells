@@ -1,5 +1,7 @@
 # G3 — `db-single` araçları, auth, belge ve dört sürücülü kabul Implementation Plan
 
+> **Durum (2026-10-19): uygulandı.** Onay kutuları işaretlenmedi; gerçek durumun kaynağı koddur, testlerdir ve [yol haritası](2026-10-18-roadmap-remaining.md)dır.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** G2 çekirdeğinin üstüne `db-single`'ın CLI'sini ve araçlarını (migrate/seed komutları, pull, export/backup/restore, doctor, replicas, Neon/Supabase, Better Auth), belgelerini ve dört sürücülü tam entegrasyon taramasını eklemek; spec'in beş kabul ölçütünü kanıtlamak.

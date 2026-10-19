@@ -1,5 +1,7 @@
 # G1 — `packages/db` → `packages/db-multi` yeniden adı Implementation Plan
 
+> **Durum (2026-10-19): uygulandı.** Onay kutuları işaretlenmedi; gerçek durumun kaynağı koddur, testlerdir ve [yol haritası](2026-10-18-roadmap-remaining.md)dır.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Çok-tenant paketi `packages/db` / `@repo/db` olarak değil `packages/db-multi` / `@repo/db-multi` olarak adlandırmak; davranış değişmez, tüketiciler (`@repo/redis`, `@repo/e2e`) yeni adı kullanır.

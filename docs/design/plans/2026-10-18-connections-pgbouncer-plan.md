@@ -1,5 +1,16 @@
 # Bağlantı yönetimi ve PgBouncer planı
 
+> **Uygulama notu (2026-10-19): C1–C10 uygulandı, C11 hesap bekliyor; plandan sapmalar:**
+> - C1: bütçe sınırları `(max_connections − superuser_reserved) × 0.9` ve `max_client_conn × pooler × 0.5`; kılavuzdaki örnek bir birim testiyle kilitli. `doctor --connection-budget` yerine `--instances --pool-max --poolers` bayrakları.
+> - C2: `pooler generate` DB'ye bağlanmaz, `DATABASE_URLS`/`DATABASE_REPLICA_URLS`'ten üretir; gerçek bir PgBouncer'a yüklenir ve `ready()` + sorgularla sınanır.
+> - C4: `tenantMaxInflight` deyim değil **bağlam** (`withTenant`, `withTenantRead`, istek kapsamı) sayar.
+> - C5: sürücü havuzları boşta bağlantı sayısını vermediği için `idle` yok; OpenTelemetry göstergeleri (`poolGauges`), Sentry için bağdaştırıcı yok.
+> - C7: sınıflar `failoverClass` ile; hazırlanmadan zaman aşımı (`DeadlineError.workStarted === false`) yeniden denenebilir sayılır.
+> - C8: senaryolar `faults.test.ts`; her tenant `statementTimeoutMs + 1,5 sn` sınırı ölçüldü ve `connections.md`'ye yazıldı.
+> - C9: matris PgBouncer 1.21.0, 1.23.1, 1.24.0 × `max_prepared_statements` 0/100 (CI işi `pgbouncer-matrix`).
+> - C10: isimli prepared statement **reddedildi** (20.000 farklı deyimle kazanç yok, istemci belleği büyüyor).
+> - C11: gerçek sağlayıcı hesabı gerektirir; sahip işi.
+
 Tarih: 2026-10-18 · Tasarım: [`2026-10-18-pgcells-oss-regions-design.md`](../specs/2026-10-18-pgcells-oss-regions-design.md) §6, D20 · Kılavuz: [`docs/guides/connections.md`](../../guides/connections.md) · Ana yol: [roadmap](2026-10-18-roadmap-remaining.md) F3 → **v0.2**
 
 Bu proje için bağlantı yönetimi ürünün yarısıdır. Hedef: bir operatörün, kendi ortamı için üç bağlantı bütçesini hesaplayabilmesi, paketin bunu **denetlemesi**, PgBouncer'ın üretim ayarını şablondan üretebilmesi ve hata/failover davranışının ölçülmüş olması. Kilometre taşı düzeyindedir.

@@ -2,7 +2,7 @@
 
 **TypeScript için bölge-farkında, çok tenant’lı PostgreSQL** — tenant’lar *hücrelerde* (PostgreSQL kümeleri) yaşar, küçük bir dizin nerede olduklarını söyler, her bağlantı bir transaction pooler’dan geçer ve her deyimin deadline’ı vardır.
 
-[English](README.md) · [Mimari](#mimari) · [Bağlantı yönetimi](docs/guides/connections.md) · [Bölgeler](docs/guides/regions.md) · [Yol haritası](docs/design/plans/2026-10-18-roadmap-remaining.md)
+[English](README.md) · [Mimari](#mimari) · [Bağlantı yönetimi](docs/guides/connections.md) · [Bölgeler](docs/guides/regions.md) · [Kapasite](docs/guides/capacity.md) · [Baştan sona anlatım](docs/guides/walkthrough.md) · [Yol haritası](docs/design/plans/2026-10-18-roadmap-remaining.md)
 
 > **Durum: yayın öncesi.** Motor tek bölge için tamamlanmış ve yoğun test edilmiş durumda. Depo açık kaynağa hazırlanıyor (eski adı `multi-tenant-example`, paketler `@repo/*`); bölge-farkında yerleşim, fencing ve bağlantı araçları planlı. Ayrıntı: [tasarım](docs/design/specs/2026-10-18-pgcells-oss-regions-design.md), [yol haritası](docs/design/plans/2026-10-18-roadmap-remaining.md).
 
@@ -29,7 +29,7 @@ Binlerce tenant’ı birkaç bölgeden ilişkisel bir veritabanıyla sunmak birk
 
 Diyagramlar İngilizce README’dedir ve birebir geçerlidir: [topoloji](README.md#topology) · [bir istek](README.md#one-request) · [bağlantılar](README.md#connections) · [tenant taşıma](README.md#moving-a-tenant-between-cells).
 
-Özet: bir **hücre**, önünde pooler filosu olan bir PostgreSQL kümesidir (primary, yerel okuma replikası, DR replikası). Bir **tenant** tek hücredeki bir schema’dır. **Dizin** (`db0`) tenant→hücre eşlemesini tutar ve sıcak yolda değildir. Bugün ✅ hücreler, placement, önbellek, replika ve çevrimdışı taşıma var; bölge etiketi, ikamet denetimi, dizin replikaları ve fencing 🔜 planlı ([bölge kılavuzu](docs/guides/regions.md)).
+Özet: bir **hücre**, önünde pooler filosu olan bir PostgreSQL kümesidir (primary, yerel okuma replikası, DR replikası). Bir **tenant** tek hücredeki bir schema’dır. **Dizin** (`db0`) tenant→hücre eşlemesini tutar ve sıcak yolda değildir. Bugün ✅ hücreler, placement, önbellek, replika, fencing’li çevrimdışı ve kesintisiz taşıma, bölge etiketi, ikamet bölgeleri, bölgeli uygulama (`WRONG_REGION`, `regionGuard`), replika yerelliği, dizin replikaları ve stale-if-error, yazma belirteciyle kendi yazdığını okuma ve bağlantı araç takımı var. Doğrulanmadı: gerçek çok bölgeli ağ, yönetilen sağlayıcıda failover, çevrimiçi taşımada 10–50 GB’lık tenant ([bölge kılavuzu](docs/guides/regions.md)).
 
 Bağlantılarda üç katman, üç bütçe vardır: istemci bağlantıları, pooler sunucu havuzları ve PostgreSQL `max_connections`. Çalışma anı yalnızca pooler’ı kullanır; yönetim (migration, provision, taşıma) oturum kilitleri tuttuğu için doğrudan bağlanır. Boyutlandırma formülleri, üretim PgBouncer ayarı, timeout uyumu ve failover: **[Bağlantı yönetimi ve PgBouncer](docs/guides/connections.md)**.
 
@@ -47,7 +47,7 @@ Kod örneği ve tam anlatım için İngilizce README’deki [Quick start](README
 
 ## Belgeler
 
-Mevcut paket belgeleri şimdilik Türkçedir ve İngilizceye çevrilecektir ([paketleme planı](docs/design/plans/2026-10-18-oss-packaging-plan.md)). Yeni kılavuzlar İngilizcedir: [bağlantılar](docs/guides/connections.md), [bölgeler](docs/guides/regions.md).
+Mevcut paket belgeleri şimdilik Türkçedir ve İngilizceye çevrilecektir ([paketleme planı](docs/design/plans/2026-10-18-oss-packaging-plan.md)). Yeni kılavuzlar İngilizcedir: [bağlantılar](docs/guides/connections.md), [bölgeler](docs/guides/regions.md), [kapasite](docs/guides/capacity.md), [baştan sona anlatım](docs/guides/walkthrough.md).
 
 ## Geliştirme
 

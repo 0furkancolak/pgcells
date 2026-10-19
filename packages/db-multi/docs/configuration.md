@@ -98,6 +98,7 @@ Numeric options must be integers between 1 and the upper limit; a value outside 
 | `tenantMaxInflight` | 0 (off) | 10000 | At most this many concurrent contexts (`withTenant`, `withTenantRead`, request scopes) per tenant in this process; a new one fails fast with `DATABASE_BUSY` so one noisy tenant cannot take all connections of its database. Off means nothing is counted per tenant |
 | `replicaMaxLagMs` | 5000 | 3600000 | Replica reads: a replica whose lag exceeds this is not used ([replicas.md](replicas.md)) |
 | `replicaStatusMs` | 5000 | 60000 | Cache duration of the replica status (health + lag) |
+| `causalWaitMs` | 200 | 10000 | How long a read that carries a write token (`{ after }`) waits for a replica to replay it before the primary answers ([replicas.md](replicas.md#read-your-own-write-across-requests)) |
 | `replicaOnUnavailable` | `"primary"` | `"primary"` \| `"error"` | When no healthy replica exists, the read goes to the primary in a `READ ONLY` transaction, or `REPLICA_UNAVAILABLE` |
 | `onSpan` | none | | Measurement callback; see [telemetry.md](telemetry.md) for OpenTelemetry/Sentry |
 

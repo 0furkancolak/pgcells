@@ -206,6 +206,10 @@ export default {
 
 `@0furkancolak/pgcells-redis` `createTenantWorker` builds `createDbScope(db, job.data.tenantId, placement)` for each job and gives the handler `{ tenantId, db }`: [`@0furkancolak/pgcells-redis` queues](https://github.com/0furkancolak/pgcells/blob/main/packages/redis/docs/queues.md).
 
+## Read your own write: `lastWriteToken`
+
+`RequestDb.lastWriteToken()` returns a token for the writes this scope made on `tenant` (the primary's WAL position; `undefined` if there were none), and `tenantRead.query(query, values, { after: token })` makes a later read wait for a replica to have replayed it, or go to the primary ([replicas.md](replicas.md#read-your-own-write-across-requests)).
+
 ## Regions: `regionGuard`
 
 With `createDatabase({ region: "eu-west" })` a tenant context for a tenant whose node is in another region fails with `WRONG_REGION` instead of reaching a database across an ocean. `regionGuard` turns that into an HTTP answer *before* the route runs, and `createDbScope`/`RequestDb` expose `placement()` and `region` for your own checks:

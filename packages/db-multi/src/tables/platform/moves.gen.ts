@@ -13,6 +13,7 @@ export const moveRow = z.object({
   error: z.string().nullable(),
   createdAt: z.date(),
   updatedAt: z.date(),
+  online: z.boolean(),
 });
 export const moveInsert = z.object({
   id: z.uuid(),
@@ -26,6 +27,7 @@ export const moveInsert = z.object({
   error: z.string().nullable().optional(),
   createdAt: z.date().optional(),
   updatedAt: z.date().optional(),
+  online: z.boolean().optional(),
 });
 export const moveColumns = {
   id: "id",
@@ -39,6 +41,7 @@ export const moveColumns = {
   error: "error",
   createdAt: "created_at",
   updatedAt: "updated_at",
+  online: "online",
 } as const;
 export type MoveRow = z.infer<typeof moveRow>;
 export type MoveInsert = z.infer<typeof moveInsert>;

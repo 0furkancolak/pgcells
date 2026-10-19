@@ -1,5 +1,7 @@
 # Advanced SQL E1: Operatör ve Fonksiyon Implementation Plan
 
+> **Durum (2026-10-19): uygulandı.** Onay kutuları işaretlenmedi; gerçek durumun kaynağı koddur, testlerdir ve [yol haritası](2026-10-18-roadmap-remaining.md)dır.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Uygulama sorgularında JSON/regex/içerme operatörleri, JSON/dizi/metin fonksiyonları ve `FROM` içinde tablo döndüren fonksiyonlar derlemede doğrulanır ve gerçek PostgreSQL'de üç sürücüde (bun, postgres, pg) ve neon'da çalışır.

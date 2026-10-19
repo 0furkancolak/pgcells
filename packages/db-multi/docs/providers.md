@@ -28,6 +28,20 @@ The transaction-pooling path (`ready()` probe, deadlines, tenant queries, transa
 
 No behavioural difference between these versions showed up in these checks. Older releases, PgCat and PgDog are not tested. Managed poolers (Supavisor, Neon, RDS Proxy, Hyperdrive) stay `documented, not verified` until `verify:provider` has run against a real account.
 
+## Online move (logical replication)
+
+`move --online` ([operations.md](operations.md#online-move-move---online)) needs the source to publish and the target to subscribe. What each provider allows, with the verification status of each row:
+
+| Provider | As source (publisher) | As target (subscriber) | Status |
+|---|---|---|---|
+| Plain PostgreSQL 15/16, self-hosted or Docker | `wal_level=logical`, a free slot and WAL sender | superuser, or `pg_create_subscription` (16) | **verified** (2026-10-19, PostgreSQL 16.15, Bun SQL) |
+| Amazon RDS / Aurora PostgreSQL | parameter `rds.logical_replication=1` (needs a reboot) | `rds_superuser` can create subscriptions | documented, not verified |
+| Google Cloud SQL for PostgreSQL | database flag `cloudsql.logical_decoding=on` | the default admin role may create subscriptions | documented, not verified |
+| Neon | logical replication is enabled per project in its settings | supported with the project owner role | documented, not verified |
+| Supabase | publications and slots are available | the `postgres` role is not a superuser, so creating a subscription is not possible: restricted, use it as a source only | documented, not verified |
+
+All the provider rows come from the providers' documentation and have not been run against real accounts. The source must be reachable from the target server (private networking or allow-listing), which is outside what pgcells can check.
+
 ## Verification
 
 ```bash

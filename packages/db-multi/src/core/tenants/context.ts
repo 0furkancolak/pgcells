@@ -162,6 +162,28 @@ const replicaReads = ({ db, markDown }: { db: Database; markDown(): void }): Con
   exec: NOT_READ_ONLY,
 });
 
+/** A write position (`pg_current_wal_lsn()`): `X/Y` in hexadecimal. */
+const LSN_PATTERN = /^[0-9A-Fa-f]{1,8}\/[0-9A-Fa-f]{1,8}$/;
+const CAUSAL_POLL_MS = 10;
+const REPLAY_REACHED = "SELECT pg_catalog.pg_last_wal_replay_lsn() >= $1::pg_catalog.pg_lsn AS ok";
+
+/** Options of one read: `after` is a write token (`lastWriteToken()`); the read waits, for at most `causalWaitMs`, until the replica has replayed it. */
+export interface ReadOptions {
+  after?: string;
+}
+
+/** Waits until the replica has replayed `token`; `false` if it has not within `waitMs`. A failure of the check itself is thrown. */
+async function replayed(replica: Pick<Connection, "query">, token: string, waitMs: number): Promise<boolean> {
+  const deadline = performance.now() + waitMs;
+  for (;;) {
+    const [row] = await replica.query<{ ok: boolean }>(REPLAY_REACHED, [token]);
+    if (row?.ok) return true;
+    const left = deadline - performance.now();
+    if (left <= 0) return false;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(CAUSAL_POLL_MS, left)));
+  }
+}
+
 /** Each call is pinned to a replica. If there is no healthy replica (or none is configured), `onUnavailable`: `READ ONLY` on the primary
  * or `REPLICA_UNAVAILABLE`. `afterWrite`: a write happened in the same request, so reads stay on the primary regardless of the policy. */
 export function createWithTenantRead(
@@ -171,12 +193,33 @@ export function createWithTenantRead(
   onUnavailable: ReplicaPolicy,
   lifecycle?: ContextLifecycle,
   guard?: (placement: Placement) => void,
+  causalWaitMs = 200,
 ) {
-  async function forPlacement<T>(placement: Placement, work: (db: ReadContext) => Promise<T>, afterWrite = false, session?: ReadSession): Promise<T> {
+  async function forPlacement<T>(
+    placement: Placement,
+    work: (db: ReadContext) => Promise<T>,
+    afterWrite = false,
+    session?: ReadSession,
+    options: ReadOptions = {},
+  ): Promise<T> {
     guard?.(placement);
     requireActive(placement);
+    if (options.after !== undefined && !LSN_PATTERN.test(options.after)) throw new AppError("INVALID_QUERY", "after must be a write token from lastWriteToken()");
     const primary = pools.node(placement.databaseId);
     let handle = afterWrite ? undefined : (session?.handle ?? (await router.pick(placement.databaseId)));
+    // A read that must see an earlier write: the replica has to have replayed it; otherwise the primary answers, whatever the lag policy says.
+    let causalFallback = false;
+    if (handle && options.after !== undefined) {
+      const replica = handle;
+      const caught = await replayed(replica.db, options.after, causalWaitMs).catch((error: unknown) => {
+        if (databaseUnavailable(error)) replica.markDown();
+        return false;
+      });
+      if (!caught) {
+        handle = undefined;
+        causalFallback = true;
+      }
+    }
     if (handle && session) {
       const picked = handle;
       session.handle = picked;
@@ -190,10 +233,11 @@ export function createWithTenantRead(
     }
     let connection: Connection;
     if (handle) connection = replicaReads(handle);
-    else if (afterWrite || onUnavailable === "primary") connection = primaryReads(primary);
+    else if (afterWrite || causalFallback || onUnavailable === "primary") connection = primaryReads(primary);
     else throw new AppError("REPLICA_UNAVAILABLE", `No usable replica for database ${placement.databaseId}`);
     return runContext(connection, undefined, placement.schemaName, "tenant", work, placement.tenantId, { readOnly: true, lifecycle });
   }
-  const withTenantRead = async <T>(id: string, work: (db: ReadContext) => Promise<T>): Promise<T> => forPlacement(await placements.get(id), work);
+  const withTenantRead = async <T>(id: string, work: (db: ReadContext) => Promise<T>, options?: ReadOptions): Promise<T> =>
+    forPlacement(await placements.get(id), work, false, undefined, options);
   return Object.assign(withTenantRead, { forPlacement });
 }

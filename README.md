@@ -2,7 +2,7 @@
 
 **Region-aware multi-tenant PostgreSQL for TypeScript** — tenants live in *cells* (PostgreSQL clusters), a small directory says where, every connection goes through a transaction pooler, and every statement has a deadline.
 
-[Türkçe](README.tr.md) · [Architecture](#architecture) · [Connection management](docs/guides/connections.md) · [Regions](docs/guides/regions.md) · [Roadmap](docs/design/plans/2026-10-18-roadmap-remaining.md)
+[Türkçe](README.tr.md) · [Architecture](#architecture) · [Connection management](docs/guides/connections.md) · [Regions](docs/guides/regions.md) · [Capacity](docs/guides/capacity.md) · [Walkthrough](docs/guides/walkthrough.md) · [Roadmap](docs/design/plans/2026-10-18-roadmap-remaining.md)
 
 > **Status: pre-release.** The engine is complete and heavily tested for a single region. The repository is being renamed and packaged for open source (it was `multi-tenant-example`, packages `@repo/*`); region-aware placement, fencing and connection tooling are planned. See the [design](docs/design/specs/2026-10-18-pgcells-oss-regions-design.md) and the [roadmap](docs/design/plans/2026-10-18-roadmap-remaining.md). Examples below use the target package names.
 
@@ -84,7 +84,7 @@ flowchart TB
   cli --> dir
 ```
 
-A **cell** is a PostgreSQL cluster with its pooler fleet. A **tenant** is a schema in one cell. The **directory** (`db0`) maps tenants to cells and stays off the hot path. Today ✅ cells, placement, caching, replicas and offline moves are implemented; region labels, residency checks, directory replicas and fencing are 🔜 planned — the [regions guide](docs/guides/regions.md) has the status table and the failure-mode analysis.
+A **cell** is a PostgreSQL cluster with its pooler fleet. A **tenant** is a schema in one cell. The **directory** (`db0`) maps tenants to cells and stays off the hot path. Today ✅ cells, placement, caching, replicas, fenced offline and zero-downtime moves, region labels, residency zones, a regional application (`WRONG_REGION`, `regionGuard`), replica locality, directory replicas with stale-if-error, write tokens for read-your-writes, and a connection toolkit (budget, generated PgBouncer config, drain, per-tenant limits, failure classes) are implemented. Not verified: real multi-region networks, managed-provider failover, tenants of 10–50 GB for the online move. The [regions guide](docs/guides/regions.md) has the status table and the failure-mode analysis.
 
 ### One request
 
@@ -152,7 +152,7 @@ stateDiagram-v2
   maintenance --> copying: reserve target schema
   copying --> validated: fingerprints match
   validated --> cutover: placement_version + 1 on target
-  cutover --> fenced: planned, source schema locked
+  cutover --> fenced: source schema renamed
   fenced --> completed: placement = active
   copying --> failed
   validated --> failed
@@ -162,7 +162,7 @@ stateDiagram-v2
   rolledback --> [*]
 ```
 
-Every step is guarded by advisory locks and compare-and-set on `placement_version`, and can be resumed. Moves are currently offline; fencing and zero-downtime moves are planned ([regions guide](docs/guides/regions.md#7-moving-tenants)).
+Every step is guarded by advisory locks and compare-and-set on `placement_version`, and can be resumed. After cutover the source schema is renamed, so a process with a stale placement fails instead of writing to the old copy. `move --online` copies the schema by logical replication while the tenant keeps taking writes and pauses writes only for the final catch-up ([regions guide](docs/guides/regions.md#7-moving-tenants)).
 
 ## Quick start
 
@@ -189,7 +189,7 @@ app.get("/users/:email", async (c) => c.json(await c.get("db").tenant.query(find
 
 ## Documentation
 
-- Guides: [Connection management and PgBouncer](docs/guides/connections.md) · [Relational databases across regions](docs/guides/regions.md)
+- Guides: [Connection management and PgBouncer](docs/guides/connections.md) · [Relational databases across regions](docs/guides/regions.md) · [Capacity](docs/guides/capacity.md) · [Walkthrough: first tenant to second region](docs/guides/walkthrough.md)
 - Reference (`@0furkancolak/pgcells`): [configuration](packages/db-multi/docs/configuration.md) · [tenants](packages/db-multi/docs/tenants.md) · [queries](packages/db-multi/docs/queries.md) · [operations](packages/db-multi/docs/operations.md) · [replicas](packages/db-multi/docs/replicas.md) · [providers](packages/db-multi/docs/providers.md) · [errors](packages/db-multi/docs/errors.md) · [CLI](packages/db-multi/docs/cli.md)
 - Design: [specs and plans](docs/design/)
 

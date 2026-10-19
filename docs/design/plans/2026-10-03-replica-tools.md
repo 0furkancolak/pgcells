@@ -1,5 +1,7 @@
 # Replica Tools Implementation Plan (C2)
 
+> **Durum (2026-10-19): uygulandı (`replicas`, `doctor`, `--from-replica`); sağlayıcı replika ölçümü sahip işidir.** Onay kutuları işaretlenmedi; gerçek durumun kaynağı koddur, testlerdir ve [yol haritası](2026-10-18-roadmap-remaining.md)dır.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Operatör replica durumunu görür (`replicas` komutu), `doctor` replica'ları denetler, `backup`/`export` replica'dan (`--from-replica`) alınabilir; sağlayıcı replica lag davranışı için sahip çalıştırması olan bir ölçüm eklenir.

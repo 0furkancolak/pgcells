@@ -1,5 +1,7 @@
 # Bağlantı topolojisi ve pooler zorunluluğu — Uygulama planı
 
+> **Durum (2026-10-19): uygulandı (bağlantı topolojisi ve PgBouncer şartı); sonraki işler: connections kılavuzu ve F3.** Onay kutuları işaretlenmedi; gerçek durumun kaynağı koddur, testlerdir ve [yol haritası](2026-10-18-roadmap-remaining.md)dır.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Runtime'ın bir transaction-mode pooler arkasında çalıştığını `db.ready()` içinde kanıtlamak (`POOLER_REQUIRED`) ve düğüm başına replica URL'lerini (`DATABASE_REPLICA_URLS`) yapılandırıp doğrulamak.

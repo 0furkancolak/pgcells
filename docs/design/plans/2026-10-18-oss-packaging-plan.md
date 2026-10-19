@@ -1,5 +1,7 @@
 # Açık kaynak paketleme ve yeniden adlandırma planı
 
+> **Uygulama notu (2026-10-19): paketleme uygulandı** (yeniden adlandırma, LICENSE, jamaster ayrımı, derleme hattı, İngilizce çeviri, yayın hattı). Kalan sahip işleri: npm paket adları ve yayın kimlik bilgisi, GitHub özel güvenlik bildirimi. Kalan çeviri: bazı test dosyalarındaki Türkçe yorumlar (bkz. yol haritası).
+
 Tarih: 2026-10-18 · Tasarım: [`2026-10-18-pgcells-oss-regions-design.md`](../specs/2026-10-18-pgcells-oss-regions-design.md) D1–D6, D12, D14, D19 · Ana yol: [roadmap](2026-10-18-roadmap-remaining.md) F0–F1
 
 Durum: **onay bekliyor**; kod/dosya taşıma işleri onaydan sonra başlar. Ön denetim bulguları (bu oturumda yapıldı): geçmişte `.env` hiç commit edilmemiş, gizli bilgi desenleri bulunamadı; `LICENSE` yok; her iki paketin `package.json`'ı `private: true` ve ham `src/*.ts` dışa aktarıyor; migration/seed/sorgu listeleri `with { type: "text" }` ile `.sql` import ediyor (Bun'a özgü); 24 dosyada "jamaster" geçiyor; 252 commit'lik geçmiş; CI yalnızca `db-multi` ve `db-single`; kök README "paketler birbirine bağımlı değil" diyordu (düzeltildi).

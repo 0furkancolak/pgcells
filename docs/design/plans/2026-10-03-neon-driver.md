@@ -1,5 +1,7 @@
 # Neon serverless sürücüsü (B2) Uygulama Planı
 
+> **Durum (2026-10-19): uygulandı (`neonDriver`).** Onay kutuları işaretlenmedi; gerçek durumun kaynağı koddur, testlerdir ve [yol haritası](2026-10-18-roadmap-remaining.md)dır.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** `@repo/db/drivers/neon` sürücüsünü eklemek: Neon'un WebSocket `Pool`'u `Driver` sözleşmesine, `pg.ts` ile ortak bir fabrikadan uydurulur.

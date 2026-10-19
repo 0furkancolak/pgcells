@@ -1,5 +1,15 @@
 # Bölge modeli, fencing ve dayanıklılık planı
 
+> **Uygulama notu (2026-10-19): R1–R12 uygulandı; plandan sapmalar:**
+> - R1: `tools fence-legacy-moves` yazılmadı; eski kopyaları `doctor` (`unfenced_moved_copies`) bulur, düzeltme el ile `ALTER SCHEMA … RENAME` (komut `doctor` çıktısında).
+> - R2: ihlal yalnızca `createManagement` anında `INVALID_CONFIG`; `unsafePlacementCacheWait` seçeneği geçici ortamlar için kapı.
+> - R3: `fencing: true` bayrağı gerekmedi (fencing her zaman açık); dizin replikasından okuma `replicaOnUnavailable: "error"` politikasından bağımsızdır (dizin okuması küçük ve önbellekli); `staleIfErrorMs` yeni tipli seçenek.
+> - R4–R6: `Placement` `residencyZone` ve `region` alanlarını taşır; `regionGuard` `RequestDb.placement()` üzerinden çalışır.
+> - R7: replika yerelliği yalnızca **bölge** birimiyle; "aynı zon" kademesi yazılmadı.
+> - R9: replika gecikmesi senaryosu iki bölgeli yığında tekrarlanmadı; tek bölgeli replika testleri (`replica.test.ts`) kapsar. Gecikme proxy ile simüle; gerçek ağ doğrulanmadı.
+> - R10–R11: spike 113 MB ve 1,1 GB ile koşuldu (10–50 GB ölçülmedi). Algoritma plandan farklıdır: önce tablo kilidi, sonra heartbeat ile uygulama kanıtı, en son schema yeniden adlandırma (önce yeniden adlandırmak çoğaltmayı bozuyor). Sağlayıcı matrisi yalnız düz PostgreSQL için doğrulandı.
+> - R12: `cell promote` yalnızca plan üretir; nedensel okuma `lastWriteToken()` + `{ after }`.
+
 Tarih: 2026-10-18 · Tasarım: [`2026-10-18-pgcells-oss-regions-design.md`](../specs/2026-10-18-pgcells-oss-regions-design.md) D8–D10, D13, D16–D18, D20–D21 · Kılavuz: [`docs/guides/regions.md`](../../guides/regions.md) · Ana yol: [roadmap](2026-10-18-roadmap-remaining.md)
 
 Kilometre taşı düzeyindedir; görev düzeyinde plan her faz onaylandığında yazılır. Hepsi **eklemeli ileri migration** (D15) ve **donmuş kalıcı tanımlayıcılar** (D14) kurallarına uyar. Yeni ortam değişkeni yok (D3 anti-hedef): bölge bilgisi `platform.nodes`'ta, uygulamanın bölgesi tipli seçenekte.

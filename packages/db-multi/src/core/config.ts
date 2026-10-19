@@ -34,6 +34,8 @@ const RUNTIME_LIMITS = {
   /** Replica reads: a replica whose lag exceeds this is excluded; the status record (health + lag) stays cached for this long. */
   replicaMaxLagMs: [5000, 3_600_000],
   replicaStatusMs: [5000, 60_000],
+  /** A read that carries a write token waits at most this long for the replica to replay it, then the primary answers. */
+  causalWaitMs: [200, 10_000],
 } as const;
 const MANAGEMENT_LIMITS = {
   ...RUNTIME_LIMITS,

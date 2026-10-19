@@ -19,10 +19,12 @@ Bu belge bir **dizindir ve sıralamadır**. Her satırın ayrıntısı konu plan
 | Açık kaynak paketleme (F1) | ✅ | Derlenmiş paketler, LICENSE, jamaster ayrımı, İngilizce, yayın hattı; sahip işleri (npm adı/yayın hesabı) kalır |
 | Fencing, `db0` dayanıklılığı (F2) | ✅ | 2026-10-19: kaynak schema yeniden adlandırma, bekleme invariantı, dizin replikası, stale-if-error |
 | Bağlantı bütçesi/PgBouncer araçları (F3) | ✅ | 2026-10-19: `pooler plan/generate`, `doctor` denetimleri, `stats()`, `close({drain})`, `tenantMaxInflight`, hata sınıflandırma, toxiproxy testleri, PgBouncer 1.21/1.23/1.24 matrisi. Karar: isimli prepared statement **uygulanmıyor** |
-| Bölge modeli (F4) | ☐ | Bu işin merkezi |
-| Ölçek (D): kapasite modeli | ☐ | |
-| Kılavuz (F): baştan sona senaryo | ☐ | |
-| Kesintisiz taşıma ve DR (F6) | ☐ | |
+| Bölge modeli (F4) | ✅ | 2026-10-19: node `region`/`residency_zone`/etiket, kalıcı ikamet bölgesi, `RESIDENCY_VIOLATION`, `createDatabase({ region })`, `regionGuard`, replika yerelliği (bölge birimiyle), `doctor` denetimleri, iki bölgeli sınama yığını (gecikme simüle) |
+| Ölçek (D): kapasite modeli | ✅ | `docs/guides/capacity.md`, `capacity plan`; ölçülen ve varsayılan değerler ayrı etiketli. Backpressure kararı: 64 sabit kalır |
+| Kılavuz (F): baştan sona senaryo | ✅ | `docs/guides/walkthrough.md`; her kod bloğu CI'da türleri denetlenir ve çalıştırılır |
+| Sağlayıcı doğrulama (F5.3, C11) | ☐ | Gerçek hesap gerekir (sahip işi): komutlar `providers.md` "Verification" bölümünde |
+| `db-single` ↔ `db-multi` ortak çekirdek (F5.5) | ✅ | Karar: v0.5'e kadar kopya kalır ([karar notu](2026-10-19-core-extraction-decision.md)) |
+| Kesintisiz taşıma ve DR (F6) | ✅ | 2026-10-19: `move --online` (mantıksal replikasyon; 113 MB ve 1,1 GB ölçüldü, 10–50 GB ölçülmedi), sağlayıcı matrisi (yalnız düz PostgreSQL doğrulandı), nedensel okuma belirteci, `cell promote` planı |
 | Plan kutuları | ◐ | 398 kutunun hiçbiri işaretli, çoğu iş yapılmış |
 | Go (F7) | — | **Yapılmayacak** (sahip kararı, 2026-10-19) |
 

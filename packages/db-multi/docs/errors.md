@@ -128,6 +128,16 @@ The CLI writes the error to stderr as `{"error": "<code>", "message": "…"}` an
 | `EMPTY_SCHEMA` | The source schema has no data table | Inspect the schema |
 | `VERSION_MISMATCH`, `COLLATION_MISMATCH`, `EXTENSION_MISMATCH` | The source/target (or backup/target) PostgreSQL major version, encoding/locale/collation or extension versions differ | Match the target |
 
+### Online move
+
+| Code | When | What to do |
+|---|---|---|
+| `UNSUPPORTED_MOVE` | An online move whose servers do not meet the requirements (PostgreSQL < 15, `wal_level` not `logical`, no free replication slot, target `max_logical_replication_workers` < 2, a role that may not create subscriptions) | The message names what is missing; see [operations.md](operations.md#online-move-move---online) |
+| `ONLINE_SOURCE_URL_REQUIRED` | The subscription has to be created and no source URL (as the target server reaches it) was given | `resume-move <id> --source-url`, or `rollback-move` |
+| `ONLINE_REPLICATION_FAILED` | The subscription reported apply or copy errors on the target | Read the PostgreSQL log of the target, fix the cause, `resume-move`, or `rollback-move` |
+| `ONLINE_TIMEOUT` | The initial copy, the catch-up or the final heartbeat did not finish in time | `resume-move`; for a very large tenant raise `syncTimeoutMs` |
+| `55P03` (`lock_not_available`) | A table stayed locked by another transaction through all `lockAttempts` | Find the long transaction on the source, then `resume-move`; the placement was never changed |
+
 ## Adoption and platform move
 
 `adopt plan` reports issues per row as `problems[].code` (it does not throw); `adopt apply` repeats the same check under the lock and marks the row `failed` with the code of the first issue. Fix the reported problems and run `adopt plan` again.

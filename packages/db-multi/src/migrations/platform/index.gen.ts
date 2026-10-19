@@ -3,10 +3,12 @@ import m0 from "./20260915155443_platform.sql" with { type: "text" };
 import m1 from "./20260915155444_tenancy.sql" with { type: "text" };
 import m2 from "./20260916092603_panel_auth.sql" with { type: "text" };
 import m3 from "./20261019123213_node_regions.sql" with { type: "text" };
+import m4 from "./20261019134529_online_move.sql" with { type: "text" };
 
 export default [
   ["20260915155443_platform", m0],
   ["20260915155444_tenancy", m1],
   ["20260916092603_panel_auth", m2],
   ["20261019123213_node_regions", m3],
+  ["20261019134529_online_move", m4],
 ] as const;

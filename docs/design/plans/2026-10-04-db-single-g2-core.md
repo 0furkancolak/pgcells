@@ -1,5 +1,7 @@
 # G2 — `db-single` çekirdeği Implementation Plan
 
+> **Durum (2026-10-19): uygulandı.** Onay kutuları işaretlenmedi; gerçek durumun kaynağı koddur, testlerdir ve [yol haritası](2026-10-18-roadmap-remaining.md)dır.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** `packages/db-single` (`@repo/db-single`): tenant, placement ve platform kavramı olmayan, tek DB ve tek schema'lı çalışma anı + migration çekirdeği. Derleyici (E dahil), sürücüler, deadline/pool motoru, pooler zorunluluğu, replica okuma ve migration/seed zinciri `db-multi`'den **kopyalanarak** sadeleştirilir; çalışma anı fabrikası, bağlam, migration çalıştırıcısı ve yönetim oturumu tek schema için küçük yeniden yazımlardır.

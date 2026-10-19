@@ -81,6 +81,29 @@ Each replica opens its own pool and gets `poolMax` connections: per process a to
 - There is no hidden per-query retry.
 - Management (`migrate`, `bootstrap`, `provision`…) ignores `DATABASE_REPLICA_URLS`.
 
+## Read your own write across requests
+
+Within one request a read after a write already goes to the primary. Across requests a replica can be behind. Carry a *write token* to make a later read see an earlier write:
+
+```ts
+// request 1: after writing, take a token (the primary's WAL position) and hand it to the client, e.g. in a cookie or a response header
+await c.get("db").tenant.query(addUser, [id, name, email]);
+const token = await c.get("db").lastWriteToken(); // undefined if nothing was written in this scope
+
+// request 2: a read that must see it
+const users = await c.get("db").tenantRead.query(listUsers, [10], { after: token });
+```
+
+A read with `after` first asks its replica whether it has replayed that position. If it has, the replica serves the read; if not, the read waits for it (polling every 10 ms) for at most `causalWaitMs` (default 200, up to 10000) and, if the replica is still behind, the **primary** answers it, even under `replicaOnUnavailable: "error"` (a token read is never refused for lag). There are no hidden retries: the wait is bounded, documented here, and one extra cheap query on the replica. Without `after` nothing changes. Also on `db.withTenantRead(id, work, { after })`. A malformed token is `INVALID_QUERY`. The token is the position of the primary after your writes (a later position is always safe), so it is opaque and not secret; a client that sends an arbitrary position can only make its own read wait up to `causalWaitMs`.
+
+## Promoting a replica: `cell promote`
+
+```sh
+bun run tools cell promote db1 --to 2     # replica 2 of db1
+```
+
+A read-only **plan**, not an action: pgcells does not promote anything (an automatic promotion is how split brains are made). It checks that the replica is reachable and really a standby, carries `db1`'s identity, how far it lags, and that the runtime timeout defaults came with the replication; it says whether this is a planned switchover (the old primary answers) or a failover (it does not, and must be fenced), and prints the steps: drain writers, promote with your database tooling, repoint `DATABASE_URLS` / `DATABASE_REPLICA_URLS` and the pooler alias, run `doctor`. Exit code 1 if a check blocks. Placements need no change, because tenants stay on the same database id. In code: `promotePlan(management, "db1", 2)` (`@0furkancolak/pgcells/tools`).
+
 ## Replica locality
 
 An application opened with `createDatabase({ region: "eu-west" })` reads only from replicas that live in `eu-west`; if none of them is usable, the [fallback policy](#fallback-policy) decides (primary or `REPLICA_UNAVAILABLE`), and it never reads from another region's replica. Without `region` nothing changes: any usable replica is used.

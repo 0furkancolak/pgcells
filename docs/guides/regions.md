@@ -121,7 +121,7 @@ pgcells resolves *which cell*; getting the request to the right **region** is th
 | Read after write **in the same request** | Reads go to the primary after a write in that request ✅ |
 | Reads in the same request | Pinned to the same replica (monotonic) ✅ |
 | Next request, same region, read from replica | Stale by replica lag (default limit 5 s) ✅ |
-| Next request needing your own write | Read from the primary (`tenant` context), or 🔜 pass a *causal token* (write returns the primary's LSN; the replica read waits until it has replayed that LSN or falls back to the primary) |
+| Next request needing your own write | Read from the primary (`tenant` context), or ✅ pass a *write token*: `lastWriteToken()` returns the primary's WAL position after your writes, and `tenantRead.query(…, { after: token })` waits (at most `causalWaitMs`, default 200 ms) for the replica to have replayed it, then the primary answers. No hidden retries ([replicas.md](../../packages/db-multi/docs/replicas.md#read-your-own-write-across-requests)) |
 | Across regions | Not applicable: a tenant has one home. There is no cross-region replication of tenant data except the DR replica (section 9) |
 | Replica too far behind | Falls back to the primary in a `READ ONLY` transaction, or errors, by policy ✅ |
 
@@ -152,7 +152,7 @@ Today ✅ the move is correct but **offline**: the tenant is unavailable from `m
 
 **Fencing** ✅. The safety wait bounds how stale a cached placement can be, but nothing on the *data path* stops a process that is stale anyway (long pause, partitioned from Redis, custom placement source) from writing to the old copy after cutover; the write would succeed and be lost. After cutover the mover therefore **renames the source schema** (`tenant_acme` → `tenant_acme__moved_<id>`): a stale writer fails with `undefined_table` instead of silently writing. Rename (not `REVOKE`) because runtime and management share a role and because it works on every provider. It costs nothing on the hot path (no per-query version check). The renamed copy stays inspectable; moving back is a normal new move, and `doctor` lists the copies (`retained_moved_copies`) and warns about old ones that kept the tenant's own name (`unfenced_moved_copies`).
 
-**Zero-downtime move** 🔜 (later): initial snapshot + logical replication catch-up, then a write pause of seconds for the cutover. Targets: plain PostgreSQL 16, a tenant up to 50 GB, pause ≤ 5 s. Provider support depends on `wal_level = logical`, primary keys (or `REPLICA IDENTITY FULL`), and sequence sync at cutover ⚠️; the support matrix will say "supported / restricted / unsupported" per provider.
+**Zero-downtime move** ✅ (`move --online`): the schema is copied by logical replication while the tenant keeps taking writes; writes pause only for the final catch-up. In one source transaction every table is locked `SHARE ROW EXCLUSIVE` (writes wait, reads continue), a heartbeat row proves the target has applied everything before it, sequences are copied, row counts are compared (for small schemas), the schema is renamed (the fence) and the transaction commits; then the placement switches. Two things were learnt by experiment and shaped the design: renaming the schema *before* the subscriber had applied everything breaks replication (the publisher sends the current schema name), and comparing WAL positions is unreliable when the source server also writes unreplicated WAL (the directory itself, on `db0`), hence the heartbeat. *Measured* with writes at ~200 per second (local Docker, PostgreSQL 16.15): 113 MB → pause 162 ms; 1.1 GB → initial copy 85 s and a pause of about 0.14 s plus 1.2 s to take the locks, or 10.4 s when the row counts are compared inside the pause (hence `verify: auto`). Not measured: 10 GB and 50 GB. The target of "pause ≤ 5 s for 50 GB" is therefore **not verified**; what is established is that the pause does not depend on the size except for the row-count comparison. Provider support (`wal_level = logical`, rights to create subscriptions) is a documented matrix, verified only for plain PostgreSQL ([providers.md](../../packages/db-multi/docs/providers.md#online-move-logical-replication)).
 
 **Cross-region moves** ✅ require an explicit flag (`--allow-cross-region`, `CROSS_REGION_MOVE` otherwise) and must satisfy the tenant's residency zone (section 8). The check is made when the move starts, under a share lock on both node rows, and again in the statement that switches the placement, so changing a node's zone in between cannot sneak a tenant out of its zone.
 
@@ -176,7 +176,7 @@ A short checklist for regulated deployments:
 | Purpose | Take read load off the primary | Survive loss of the primary (or its region/zone) |
 | Where | Same region, same zone | Another availability zone or region **inside the same residency zone** |
 | Used by the app | Yes, explicit `tenantRead` ✅ | No, except after promotion |
-| Failure policy | Fall back to the primary or error ✅ | Promote, then repoint the cell's pooler 🔜 runbook and `doctor` checks |
+| Failure policy | Fall back to the primary or error ✅ | Promote, then repoint the cell's pooler: ✅ a checked plan (`cell promote`), the promotion itself is yours |
 
 Replica selection is round-robin among healthy, caught-up replicas ✅. ✅ A replica lives in its database's region unless the directory says otherwise (`tools replica set db1#2 --region us-east`); an application opened with `createDatabase({ region })` reads only from replicas of its own region and otherwise falls back by policy (primary or `REPLICA_UNAVAILABLE`), so it never mixes continents ([replicas.md](../../packages/db-multi/docs/replicas.md#replica-locality)). Selection by residency *zone* is not implemented; the unit is the region. Cell failover = promote the DR replica and point the pooler's database alias at it; because the application connects to the **pooler** (stable name), no application change is needed. Position-based node identity (`DATABASE_URLS[i]` = `db<i>`) is verified against `platform.node_identity` after failover ✅.
 
@@ -184,11 +184,11 @@ Replica selection is round-robin among healthy, caught-up replicas ✅. ✅ A re
 
 | Failure | Today | Target |
 |---|---|---|
-| A cell's primary is down | Only that cell's tenants fail (`DATABASE_UNAVAILABLE`/`DATABASE_TIMEOUT` within ~7 s); others are fine ✅ (e2e 8) | Same, plus documented promote-DR runbook 🔜 |
+| A cell's primary is down | Only that cell's tenants fail (`DATABASE_UNAVAILABLE`/`DATABASE_TIMEOUT` within ~7 s); others are fine ✅ (e2e 8) | Same, plus a checked promote plan (`cell promote`) ✅; the promotion itself is the database's or provider's job |
 | Pooler fleet down | Same as cell down for that region ✅; measured: requests fail at the acquire deadline with a retryable `unreachable` error and recover within a second of the pooler returning ([connections](connections.md#8-deploys-restarts-and-failover)) | ≥ 2 poolers per cell behind a load balancer ✅ |
 | Redis down | Falls back to process cache then directory; sessions fail open ✅ (e2e 10) | Same |
 | `db0` / directory unreachable | Cached tenants work for the cache TTL (5–25 s) plus `staleIfErrorMs` (if set), then placement reads fail for everyone; no provisioning or moves ✅ | Same; a replica of `db0` in each region answers `active` lookups meanwhile ✅ |
-| Whole region down | Its tenants are unavailable; other regions fine **if** they can still reach the directory (a directory replica or `staleIfErrorMs` covers it) ✅ | DR promotion in the zone 🔜 |
+| Whole region down | Its tenants are unavailable; other regions fine **if** they can still reach the directory (a directory replica or `staleIfErrorMs` covers it) ✅ | DR promotion inside the zone with `cell promote` as the checked plan ✅; failover of a managed service is the provider's job |
 | Stale placement after a move | Bounded by TTL + wait, and a stale writer fails with `undefined_table` after cutover (fencing) ✅ | Same |
 | Wrong-region request | Refused with `WRONG_REGION` when the application has a `region` (421/307 through `regionGuard`); without one it works, slowly, across regions ✅ | Same |
 
@@ -218,6 +218,8 @@ Replica selection is round-robin among healthy, caught-up replicas ✅. ✅ A re
 - with the directory partitioned from the us application, a tenant it had cached keeps working for the `staleIfErrorMs` window, an uncached one fails with a classified error, and everything heals when the partition does;
 - provisioning into the other region from an eu management process works but is visibly slower (4–5× in the run: provisioning is many round trips), which is why management belongs next to the cells it manages.
 
+The online move and the causal reads are tested against real logical replication and a real streaming replica (`online-move.test.ts`, `causal-reads.test.ts`, compose services `postgres-lr-a`/`postgres-lr-b` with `wal_level=logical`): a live writer runs through the move and no acknowledged write is lost, a failure after the pause resumes, a rollback after the pause restores the schema name and removes the replication objects, a busy table makes the lock time out and retry.
+
 Latency is *simulated* on one machine: it proves the routing, refusals and failure behaviour, not real inter-region performance. Real networks, real provider failover and Hyperdrive stay ⚠️ not verified. Replica lag under load is covered by the single-region replica tests (`replica.test.ts`), not repeated here.
 
 ## 14. Status
@@ -234,6 +236,7 @@ Latency is *simulated* on one machine: it proves the routing, refusals and failu
 | Region model on a simulated two-region stack (latency by proxy) | ✅ |
 | Fencing at cutover | ✅ |
 | Directory replicas, stale-if-error | ✅ |
-| Causal read tokens | 🔜 |
-| Zero-downtime move, DR promote runbook | 🔜 |
+| Causal read tokens (`lastWriteToken`, `{ after }`) | ✅ |
+| Zero-downtime move (`move --online`) | ✅ small and 1 GB tenants measured; 10–50 GB not measured |
+| DR promote plan (`cell promote`: checks and steps, never promotes) | ✅ |
 | Multi-region behaviour on real providers/networks | ⚠️ |

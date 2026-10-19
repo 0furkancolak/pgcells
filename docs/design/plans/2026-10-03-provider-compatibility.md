@@ -1,5 +1,7 @@
 # Sağlayıcı uyumluluğu ve doğrulaması (B1) Uygulama Planı
 
+> **Durum (2026-10-19): uygulandı (belge + `verify:provider`); gerçek sağlayıcı hesabıyla doğrulama yapılmadı, sahip işidir (`providers.md`).** Onay kutuları işaretlenmedi; gerçek durumun kaynağı koddur, testlerdir ve [yol haritası](2026-10-18-roadmap-remaining.md)dır.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Neon ve Supabase üzerinde runtime/yönetim davranışını ölçen bir doğrulama betiği (`bun run verify:provider`) ve ölçümleri tutan `docs/providers.md` eklemek.

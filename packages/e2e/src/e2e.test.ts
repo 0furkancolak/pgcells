@@ -368,13 +368,20 @@ e2e("move under traffic: writers drained, CLI move kadikoy → db1, cache refres
   expect(failures).toEqual([]);
   expect(await count("kadikoy")).toBe(before + ids.length);
   for (const id of ids) expect((await http("kadikoy", "GET", `/users/${id}`)).status).toBe(200);
-  // The source schema is not dropped automatically; it keeps the rows from the moment of the move.
-  expect((await psql("postgres-0", "SELECT count(*) FROM tenant_kadikoy.users")).out.trim()).toBe(String(before + beforeMove));
+  // Fencing: the source schema is renamed, not dropped. It keeps the rows from the moment of the move under a marker name, and a writer that still
+  // holds the old placement (here: a raw statement against the old name) fails with undefined_table instead of writing to the abandoned copy.
+  expect((await psql("postgres-0", "SELECT to_regnamespace('tenant_kadikoy') IS NULL")).out.trim()).toBe("t");
+  const retained = (await psql("postgres-0", "SELECT nspname FROM pg_namespace WHERE nspname LIKE 'tenant_kadikoy\\_\\_moved\\_%'")).out.trim();
+  expect(retained).toMatch(/^tenant_kadikoy__moved_[0-9a-f]{8}$/);
+  expect((await psql("postgres-0", `SELECT count(*) FROM ${retained}.users`)).out.trim()).toBe(String(before + beforeMove));
+  const stale = await psql("postgres-0", "INSERT INTO tenant_kadikoy.users (id, name, email) VALUES (gen_random_uuid(), 'stale writer', 'stale@e2e.test')");
+  expect(stale.code).not.toBe(0);
+  expect(stale.err).toContain("does not exist");
   // The worker sees the new database too.
   const jobId = crypto.randomUUID();
   expect((await http("kadikoy", "POST", "/jobs/users", { id: jobId, name: "job after move" })).status).toBe(202);
   await waitFor("job after move", async () => (await http("kadikoy", "GET", `/users/${jobId}`)).status === 200, 20_000);
-  record("move", { moveResult: move.json, cliBaselineMs: baseline.ms, moveCliMs: move.ms,refreshAfterMoveMs: refreshMs, placementCacheWaitMs: 30_000, cacheBoundMs: 5_000 + 2_000, rowsBeforeMove: beforeMove, rowsAfterMove: ids.length - beforeMove, readsDuringMove: reads, sinceMoveMs: Date.now() - moved });
+  record("move", { fencedSource: retained, staleWriterRefused: true, moveResult: move.json, cliBaselineMs: baseline.ms, moveCliMs: move.ms,refreshAfterMoveMs: refreshMs, placementCacheWaitMs: 30_000, cacheBoundMs: 5_000 + 2_000, rowsBeforeMove: beforeMove, rowsAfterMove: ids.length - beforeMove, readsDuringMove: reads, sinceMoveMs: Date.now() - moved });
 });
 
 e2e("restart resilience: PgBouncer restart, Redis down (fail-open) and back", async () => {

@@ -1,5 +1,7 @@
 # Sağlayıcı araçları (B3) Uygulama Planı
 
+> **Durum (2026-10-19): uygulandı (Neon araçları); gerçek hesapla doğrulama sahip işidir.** Onay kutuları işaretlenmedi; gerçek durumun kaynağı koddur, testlerdir ve [yol haritası](2026-10-18-roadmap-remaining.md)dır.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Neon branching ile üç araç ve Supabase için PITR kaydı eklemek: `neon export-tenant` (tenant'ın geçmiş anının export klasörü), `migrate-all --safety-point neon|supabase`, `neon stage-copy`.

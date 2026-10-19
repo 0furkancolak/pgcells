@@ -10,12 +10,18 @@
  * The tenant and placement are resolved once, on the first tenant query (routes that do not use db never hit the DB); an invalid host gives
  * `INVALID_TENANT_ID`. If the `placement` option returns a cached placement (e.g. from Redis), the platform database is not read. */
 import { type Config, type DatabaseOptions, loadConfig } from "./core/config";
-import type { Driver } from "./core/driver";
+import type { Driver, Row } from "./core/driver";
 import type { SpanHandler } from "./core/database";
 import { AppError } from "./core/errors";
 import { type CloseOptions, type CloseResult, createDatabase, type Database } from "./core/runtime";
-import type { ReadContext, ReadSession, TenantContext } from "./core/tenants/context";
+import type { PreparedQuery } from "./core/sql/query";
+import type { ReadOptions, ReadSession, TenantContext } from "./core/tenants/context";
 import { type Placement, tenantFromHost } from "./core/tenants/model";
+
+/** `tenantRead` of a request: `query(query, values, { after })` lets one read ask to see an earlier write. */
+export interface RequestReadContext {
+  query<R extends unknown[] = Row[]>(query: PreparedQuery, values?: readonly unknown[], options?: ReadOptions): Promise<R>;
+}
 
 /** Three separate contexts in the same unit of work: `tenant` is the tenant schema (`src/queries/tenant/`), `node` is the `platform` schema of the DB
  * where the tenant lives (`src/queries/node/`), and `platform` is the `platform` schema of db0 (`src/queries/platform/`). */
@@ -26,7 +32,10 @@ export interface RequestDb {
   readonly platform: TenantContext;
   /** Tenant read queries go to a replica (`readOnly` queries; see `docs/replicas.md`). If a write ran on `tenant` within the same request, the read
    * stays on the primary (read-your-writes); consistency across requests is not guaranteed. */
-  readonly tenantRead: ReadContext;
+  readonly tenantRead: RequestReadContext;
+  /** A token for the writes this scope has made on `tenant`: the primary's WAL position, to hand to a later read as `{ after: token }` so that read waits for a replica to
+   * replay it (or goes to the primary). `undefined` if nothing was written. The token is opaque, safe to put in a cookie or a response header. */
+  lastWriteToken(): Promise<string | undefined>;
   /** The tenant's placement, resolved once per scope (the same one the contexts use). */
   placement(): Promise<Placement>;
   /** The region this application runs in (`createDatabase({ region })`); `undefined` in single-region mode. */
@@ -65,12 +74,17 @@ export function createDbScope(db: Database, tenant: string | (() => string), pla
     placement: target,
     region: db.region,
     tenant: context(async (work) => db.withTenant.forPlacement(await target(), work, markWrite)),
-    tenantRead: Object.freeze<ReadContext>({
-      query: async (query, values) => {
+    tenantRead: Object.freeze<RequestReadContext>({
+      query: async <R extends unknown[] = Row[]>(query: PreparedQuery, values?: readonly unknown[], options?: ReadOptions) => {
         const placement = await target();
-        return db.withTenantRead.forPlacement(placement, (t) => t.query(query, values), wrote, readSession);
+        return db.withTenantRead.forPlacement(placement, (t) => t.query<R>(query, values), wrote, readSession, options);
       },
     }),
+    lastWriteToken: async () => {
+      if (!wrote) return undefined;
+      const [position] = await db.pools.node((await target()).databaseId).query<{ lsn: string }>("SELECT pg_catalog.pg_current_wal_lsn()::text AS lsn");
+      return position?.lsn;
+    },
     node: context(async (work) => db.withNode((await target()).databaseId, work)),
     platform: context((work) => db.withPlatform(work)),
   });

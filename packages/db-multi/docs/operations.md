@@ -106,6 +106,40 @@ Each step runs under the tenant and node locks and the ownership of `placements.
 | `TARGET_RESERVED` | The target schema is reserved for another unfinished move; complete or roll back that move |
 | `SAME_DATABASE` | The tenant is already on the target |
 
+### Online move: `move --online`
+
+The flow above takes the tenant offline from `maintenance` to `completed` and waits `placementCacheWaitMs`. `move --online` keeps the tenant writable and pauses writes only for the final catch-up. It copies the schema with PostgreSQL logical replication:
+
+```sh
+bun run tools move kadikoy db1 --online [--verify auto|counts|none]
+# asks (hidden input) for the SOURCE database URL as the TARGET server reaches it: postgres://user:pw@host:5432/db
+```
+
+```ts
+await startMove(management, "kadikoy", "db1", undefined, onStarted, {
+  online: { sourceUrlForTarget: "postgres://…", verify: "auto" },
+});
+```
+
+No `--writers-drained` is needed. The URL is only used to create the subscription; PostgreSQL stores it, pgcells does not, and `resume-move` asks for it (`--source-url`) only if the subscription was not created yet.
+
+**Requirements.** PostgreSQL 15 or newer on both sides (publications for all tables in a schema), `wal_level=logical` and a free replication slot on the source, `max_logical_replication_workers` of at least 2 on the target, a management role on the target that may create subscriptions (superuser, or `pg_create_subscription` on 16), and the target server must reach the source with the URL you give (a direct connection, not a pooler). They are checked before anything is recorded (`UNSUPPORTED_MOVE` names what is missing). Tables without a primary key get `REPLICA IDENTITY FULL` on the source. Same table-and-sequence limits as the offline move, and the PostgreSQL version, collation and extension checks still apply.
+
+**Flow.** `planned → prepared → replicating → paused → cutover → fenced → completed`.
+
+1. **prepared:** the target gets the empty structure (tables, keys, indexes, foreign keys) and both sides get a small heartbeat table `_pgcells_hb` in the tenant schema.
+2. **replicating:** a publication on the source (`FOR TABLES IN SCHEMA`), a subscription on the target with the initial copy; the move waits for every table to finish copying and for a heartbeat to come back within `maxLagMs` (1 s). The tenant is writable all along.
+3. **paused:** in one source transaction every table is locked `SHARE ROW EXCLUSIVE` (writes wait, reads continue), the placement becomes `migrating` (processes with `onPlacementChange` stop sending writes), a heartbeat inserted now must reach the target (so the target has every earlier write), the sequence values are copied, row counts are compared (`verify`), the schema is renamed (the fence) and the transaction commits. Writers that were waiting on the locks re-resolve the table name and fail with `undefined_table`; nothing can be written to the abandoned copy.
+4. **cutover, fenced, completed:** as in the offline move; then the subscription, the slot and the publication are removed and the heartbeat table is dropped from the target. If removing them fails the move still completes and `move-status` shows what to clean by hand in `error`.
+
+**What the application sees.** Reads never stop. During the pause writes wait on the locks; a process that follows the placement hook gets `TENANT_UNAVAILABLE` (503) until `completed`, so give the placement hook (`onPlacementChange`, or the Redis placement cache) to every process: a process without it keeps its cached `active` placement for up to `placementCacheMs` (≤ 25 s) and its writes fail with `undefined_table` until the cache expires. Nothing is ever written to the abandoned copy and no acknowledged write is lost. A lock that can not be taken in `lockTimeoutMs` (2 s, because a long transaction holds the table) is retried `lockAttempts` (5) times without holding anyone; if it stays busy the move fails (`55P03`) with the placement untouched and can be resumed.
+
+**`verify`.** Comparing row counts inside the pause costs time proportional to the size. `auto` (default) does it for schemas up to 256 MiB; `counts` always; `none` never. The apply errors of the subscription are checked throughout; `move --online` stops with `ONLINE_REPLICATION_FAILED` if the target reports any.
+
+**Measured** (local Docker, PostgreSQL 16.15, writes at about 200 per second throughout, `bench/online-move-spike.ts`): 113 MB: initial copy 2.4 s, pause 162 ms of which 138 ms is the row count; 1.1 GB: initial copy 85 s, pause 10.4 s with the row count (10.2 s of it) and about 0.14 s without it, plus 1.2 s to take the locks; in both the counts matched and the abandoned copy did not change after the rename. Through the package (small tenant, live writer): pause 220–300 ms, 6–11 refused writes (`TENANT_UNAVAILABLE`) and one `undefined_table`, no lost acknowledged write. **Not measured:** 10 GB and 50 GB (this machine could not hold them); the copy time grows linearly with size, the pause should not once `verify` is `none`. Provider support: [providers.md](providers.md#online-move-logical-replication).
+
+`rollback-move` works for an online move before the cutover: it removes the replication objects, gives the source schema its own name back if the pause had renamed it, and drops the target copy.
+
 ### Limits
 
 - Only ordinary tables and sequences are moved (`UNSUPPORTED_MOVE`); an empty schema is `EMPTY_SCHEMA`.

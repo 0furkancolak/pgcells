@@ -44,6 +44,7 @@ test("options are typed defaults with finite bounds", () => {
     placementCacheMs: 5000,
     replicaMaxLagMs: 5000,
     replicaStatusMs: 5000,
+    causalWaitMs: 200,
     migrationConcurrency: 16,
     perDatabaseConcurrency: 4,
     migrationStatementTimeoutMs: 30000,

@@ -12,8 +12,10 @@ export { type AppMigrationContext, defineAppMigration } from "./core/tools/app-m
 export { backupAll, exportTenant, pruneBackups, restoreTenant } from "./core/tools/backup";
 export { type ImportedUser, importUsers, jsonLinesSource, sqlSource } from "./core/tools/import-users";
 export { getMove, resumeMove, rollbackMove, startMove } from "./core/tools/move";
+export { type CapacityInput, type CapacityPlan, capacityPlan } from "./core/tools/capacity-plan";
 export { type ConnectionBudget, type ConnectionBudgetInput, connectionBudget } from "./core/tools/pooler-plan";
 export { generatePoolerFiles, type PoolerFiles, type PoolerGenerateOptions } from "./core/tools/pooler-generate";
+export { promotePlan } from "./core/tools/promote";
 export { replicaReport, setReplicaRegion } from "./core/tools/replicas";
 export { splitSqlDump } from "./core/tools/sql-dump";
 export { listDatabases, listReservedTenantIds, releaseTenantIds, reserveTenantIds, setDatabase } from "./core/tools/tenancy";
