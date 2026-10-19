@@ -1,7 +1,8 @@
 /** Validates the `DATABASE_URLS` list and derives ids from the order; settings are typed options passed to the factories, not env. */
 import { AppError } from "./errors";
 
-/** The order is the identity: `DATABASE_URLS[i]` → `db<i>`. The first DB is the platform database (and tenant DB #0). The list grows only by appending at the end. */
+/** Bare URLs: the order is the identity, `DATABASE_URLS[i]` → `db<i>`, and the list grows only by appending at the end. Prefixed URLs (`db3=url`) name the node and
+ * may come in any order. Either way `db0` is the platform database (and tenant DB #0). */
 export const PLATFORM_DATABASE_ID = "db0";
 export const DATABASE_ID = /^db(?:0|[1-9]\d?)$/;
 
@@ -97,13 +98,30 @@ function addReplicas(nodes: MutableNode[], value: string | readonly string[]) {
   }
 }
 
-/** Comma-separated text or array → non-empty (at most 100), unique postgres:// URLs without schema-routing parameters.
- * `replicas`: optional `db0=url` entries (see `addReplicas`). Errors never contain the value. */
+/** `db3=postgres://…` in `DATABASE_URLS`: the same key shape as replica entries. A bare URL starts with its scheme, so the two forms never overlap. */
+const URL_ENTRY = REPLICA_ENTRY;
+
+/** All entries bare (`[i]` → `db<i>`, the order is the identity) or all prefixed (`db3=url`, any order, `db0` required, ids may skip numbers).
+ * Mixing the two forms is rejected: half-positional lists are exactly what the explicit form exists to avoid. */
+function assignIds(urls: readonly string[]): { id: string; url: string }[] | undefined {
+  const keyed = urls.map((entry) => URL_ENTRY.exec(entry));
+  if (!keyed.some(Boolean)) return urls.map((url, index) => ({ id: `db${index}`, url }));
+  if (!keyed.every(Boolean)) return undefined;
+  const nodes = keyed.map((match) => ({ id: match?.[1] ?? "", url: match?.[2] ?? "" }));
+  const ids = new Set(nodes.map((node) => node.id));
+  if (ids.size !== nodes.length || !ids.has(PLATFORM_DATABASE_ID)) return undefined;
+  return nodes.sort((a, b) => Number(a.id.slice(2)) - Number(b.id.slice(2)));
+}
+
+/** Comma-separated text or array → non-empty (at most 100), unique postgres:// URLs without schema-routing parameters, with ids from
+ * their position or from explicit `dbN=` prefixes (see `assignIds`). `replicas`: optional `db0=url` entries (see `addReplicas`). Errors never contain the value. */
 export function createConfig(value: string | readonly string[], replicas: string | readonly string[] = []): Config {
-  const urls = typeof value === "string" ? value.split(",").map((entry) => entry.trim()) : [...value];
-  if (!urls.length || urls.length > MAX_DATABASES || !urls.every(isDatabaseUrl) || new Set(urls).size !== urls.length)
-    throw new AppError("INVALID_CONFIG", "Invalid configuration: DATABASE_URLS");
-  const nodes: MutableNode[] = urls.map((url, index) => ({ id: `db${index}`, url, replicas: [] }));
+  const invalid = () => new AppError("INVALID_CONFIG", "Invalid configuration: DATABASE_URLS");
+  const entries = typeof value === "string" ? value.split(",").map((entry) => entry.trim()) : [...value];
+  if (!entries.length || entries.length > MAX_DATABASES) throw invalid();
+  const assigned = assignIds(entries);
+  if (!assigned || !assigned.every((node) => isDatabaseUrl(node.url)) || new Set(assigned.map((node) => node.url)).size !== assigned.length) throw invalid();
+  const nodes: MutableNode[] = assigned.map((node) => ({ ...node, replicas: [] }));
   addReplicas(nodes, replicas);
   return { nodes };
 }

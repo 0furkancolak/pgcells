@@ -102,12 +102,14 @@ async function inspectNode(m: Management, node: DatabaseNode, add: Add) {
 /** Upper time limit for the `--pooled-urls` probe. */
 const POOLED_PROBE_DEADLINE_MS = 10_000;
 
-/** `--pooled-urls`: runtime URLs, the same number and order as `DATABASE_URLS`. The identity check is `ready()`'s job at runtime. */
+/** `--pooled-urls`: runtime URLs for the same node ids as `DATABASE_URLS` (by position, or by `dbN=` prefix). Returned in management order.
+ * The identity check is `ready()`'s job at runtime. */
 function runtimeUrls(m: Management, pooledUrls: string) {
   const { nodes } = createConfig(pooledUrls);
-  if (nodes.length !== m.config.nodes.length)
-    throw new AppError("INVALID_CONFIG", "--pooled-urls must list one URL per DATABASE_URLS entry, in the same order");
-  return nodes.map((node) => node.url);
+  const byId = new Map(nodes.map((node) => [node.id, node.url]));
+  if (nodes.length !== m.config.nodes.length || !m.config.nodes.every((node) => byId.has(node.id)))
+    throw new AppError("INVALID_CONFIG", "--pooled-urls must list one URL per DATABASE_URLS entry, in the same order (or with the same db<N>= ids)");
+  return m.config.nodes.map((node) => byId.get(node.id) ?? "");
 }
 
 /** The runtime URL must go to a transaction-mode pooler; a direct connection gives `POOLER_REQUIRED` at runtime. */

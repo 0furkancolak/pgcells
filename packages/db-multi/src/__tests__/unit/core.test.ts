@@ -16,6 +16,34 @@ describe("configuration and identifiers", () => {
       { id: "db0", url: "postgres://runtime", replicas: [] },
     ]);
   });
+  test("accepts explicit database ids in any order and sorts them", () => {
+    const config = createConfig("db2=postgres://c, db0=postgres://a,db1=postgres://b", "db2=postgres://r");
+    expect(config.nodes.map((node) => [node.id, node.url, node.replicas])).toEqual([
+      ["db0", "postgres://a", []],
+      ["db1", "postgres://b", []],
+      ["db2", "postgres://c", ["postgres://r"]],
+    ]);
+    expect(createConfig(["db0=postgres://a", "db5=postgres://f"]).nodes.map((node) => node.id)).toEqual(["db0", "db5"]);
+    expect(createConfig(["db0=postgres://a?x=y=z"]).nodes[0]?.url).toBe("postgres://a?x=y=z");
+  });
+  test("rejects mixed, duplicate, platform-less and malformed explicit ids", () => {
+    for (const bad of [
+      "postgres://a,db1=postgres://b", // mixed forms
+      "db0=postgres://a,db0=postgres://b", // duplicate id
+      "db1=postgres://a,db2=postgres://b", // no db0
+      "db0=postgres://a,db1=postgres://a", // duplicate url
+      "db0=postgres://a,db01=postgres://b", // not a database id
+      "db0=postgres://a,db100=postgres://b",
+      "db0=mysql://a",
+    ])
+      expect(() => createConfig(bad), bad).toThrow(expect.objectContaining({ code: "INVALID_CONFIG" }));
+    expect(() => createConfig("db0=postgres://secret-host")).not.toThrow();
+    try {
+      createConfig("db1=postgres://secret-host");
+    } catch (error) {
+      expect(String(error)).not.toContain("secret-host");
+    }
+  });
   test("rejects malformed configuration", () =>
     expect(() => createConfig("x")).toThrow(AppError));
 

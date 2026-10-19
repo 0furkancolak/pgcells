@@ -62,7 +62,7 @@ Details: [migrations-and-seeds.md](migrations-and-seeds.md).
 | Command | Function | Note |
 |---|---|---|
 | `replicas` | `replicaReport(m)` | The status and lag of the replicas in `DATABASE_REPLICA_URLS`; exit code 1 if a replica is down or over the threshold ([replicas.md](replicas.md)) |
-| `doctor [--pgbouncer-url] [--pooled-urls]` | — (CLI only) | A read-only check; exit code 1 if `ok: false`. `--pgbouncer-url` and `--pooled-urls` take no value: the console URL / runtime URLs (comma-separated, in `DATABASE_URLS` order) are asked through hidden input (not written to argv); if there is no terminal, the first line of stdin is read |
+| `doctor [--pgbouncer-url] [--pooled-urls]` | — (CLI only) | A read-only check; exit code 1 if `ok: false`. `--pgbouncer-url` and `--pooled-urls` take no value: the console URL / runtime URLs (comma-separated, in `DATABASE_URLS` order or with the same `db<N>=` prefixes) are asked through hidden input (not written to argv); if there is no terminal, the first line of stdin is read |
 | `move <tenant> <dbN> --writers-drained` | `startMove(m, tenant, dbN, true, onStarted)` | First `{"moveId":"…"}`, then the move record. Takes ≥ 30 s |
 | `move-status <moveId>` | `getMove(m, moveId)` | |
 | `resume-move <moveId> --writers-drained` | `resumeMove(m, moveId, true)` | |

@@ -82,12 +82,15 @@ const askUrl = async (question: string, subject: string) => {
   return postgresUrl(await askSecret(question), subject).href;
 };
 const POOLED_URLS_QUESTION = "Runtime URLs (DATABASE_URLS format, comma-separated, input is hidden): ";
-/** A comma-separated URL list is asked for with hidden input; each entry is validated, and error messages do not contain the value. */
+/** A comma-separated URL list is asked for with hidden input; each entry (optionally prefixed `db<N>=`) is validated, and error messages do not contain the value. */
 const askUrls = async (question: string, subject: string) => {
   const { askSecret, postgresUrl } = await import("./tools/ask-secret");
   return (await askSecret(question))
     .split(",")
-    .map((entry) => postgresUrl(entry.trim(), subject).href)
+    .map((entry) => {
+      const [, id = "", url = entry.trim()] = /^\s*(db(?:0|[1-9]\d?)=)?(.*)$/.exec(entry) ?? [];
+      return `${id}${postgresUrl(url.trim(), subject).href}`;
+    })
     .join(",");
 };
 const REPLICA_URLS_QUESTION = "Direct replica URLs (db0=postgres://…, comma-separated, input is hidden): ";
@@ -551,7 +554,7 @@ Options (migrate, migrate-all, seed-all): --dry-run, --db db0,db1, --concurrency
   --continue-on-error (continue with the other tenants after an error). An option value is given as --name value or --name=value.
 
 move, resume-move and rollback-move require --writers-drained, which confirms that the writers have been stopped (docs/operations.md#tenant-move).
-Environment: DATABASE_URLS (required; the first URL is the platform DB; direct or session-pooling connections).
+Environment: DATABASE_URLS (required; direct or session-pooling connections; the first URL is the platform DB, or name the nodes: db0=url,db1=url).
 Driver: --driver (default bun). See the README for detailed setup.`;
 
 const camelCase = (name: string) => name.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
