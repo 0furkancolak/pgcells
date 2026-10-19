@@ -70,6 +70,39 @@ async function inspectPlatform(m: Management, add: Add) {
   add("operational_states", true, `Inactive tenants: ${summary.inactive}; those with a move operation: ${summary.moving}. These are not changed automatically.`);
 }
 
+/** Fenced source copies on a node: schemas a completed move renamed to `<schema>__moved_<id>`. */
+const RETAINED_COPIES =
+  "SELECT nspname AS name FROM pg_catalog.pg_namespace WHERE nspname ~ '^(tenant|demo)_[a-z0-9_]*__moved_[0-9a-f]{8}$' ORDER BY nspname LIMIT 51";
+/** Source schemas of completed moves from this node whose tenant now lives elsewhere: candidates for an old copy that kept the tenant's own name. */
+const MOVED_AWAY_SCHEMAS =
+  "SELECT DISTINCT mv.source->>'schemaName' AS name FROM platform.moves mv JOIN platform.placements p ON p.tenant_id=mv.tenant_id WHERE mv.status='completed' AND mv.source->>'databaseId'=$1 AND p.database_id<>$1 ORDER BY 1 LIMIT 1000";
+const EXISTING_SCHEMAS = "SELECT nspname AS name FROM pg_catalog.pg_namespace WHERE nspname IN (SELECT pg_catalog.jsonb_array_elements_text($1::text::jsonb)) ORDER BY nspname LIMIT 51";
+const LIST_LIMIT = 50;
+const preview = (names: string[]) => `${names.slice(0, LIST_LIMIT).join(", ")}${names.length > LIST_LIMIT ? ", …" : ""}`;
+
+/** Informational: fenced copies hold the pre-move data (drop them when no longer needed). Failing: a copy that still carries the tenant's own name
+ * means a stale writer could write to it (moves completed before fencing existed, or a copy restored by hand). */
+async function checkMovedCopies(m: Management, node: DatabaseNode, add: Add) {
+  const db = m.pools.node(node.id);
+  const retained = (await db.query<{ name: string }>(RETAINED_COPIES)).map((row) => row.name);
+  add(
+    "retained_moved_copies",
+    true,
+    retained.length
+      ? `Fenced source copies from completed moves (${retained.length > LIST_LIMIT ? `more than ${LIST_LIMIT}` : retained.length}): ${preview(retained)}. They hold the pre-move data; run DROP SCHEMA … CASCADE once you no longer need them.`
+      : "No fenced source copies are retained.",
+  );
+  const candidates = (await m.pools.platform.query<{ name: string }>(MOVED_AWAY_SCHEMAS, [node.id])).map((row) => row.name);
+  const unfenced = candidates.length ? (await db.query<{ name: string }>(EXISTING_SCHEMAS, [JSON.stringify(candidates)])).map((row) => row.name) : [];
+  add(
+    "unfenced_moved_copies",
+    unfenced.length === 0,
+    unfenced.length
+      ? `Schemas of tenants that moved away still carry the tenant's own name: ${preview(unfenced)}. A process with a stale placement could still write to them; fence each with ALTER SCHEMA "<name>" RENAME TO "<name>__moved_00000000", or drop it.`
+      : "No old source copy keeps a tenant's own schema name.",
+  );
+}
+
 /** If a management session can be opened it is a direct connection; errors other than `DIRECT_CONNECTION_REQUIRED` break the check. */
 const isDirectConnection = (m: Management, databaseId: string) =>
   openSession(m, databaseId).then(
@@ -97,6 +130,7 @@ async function inspectNode(m: Management, node: DatabaseNode, add: Add) {
     `Runtime timeouts must be the DB defaults (${expected.join(", ")}); run bootstrap, then refresh the pooler connections.`,
   );
   await checkPlatformMigrations(add, db, "node");
+  await checkMovedCopies(m, node, add);
 }
 
 /** Upper time limit for the `--pooled-urls` probe. */

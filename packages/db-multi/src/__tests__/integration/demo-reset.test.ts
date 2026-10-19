@@ -17,6 +17,7 @@ beforeAll(async () => {
   app = createManagement(directConfig(), {
     driver,
     placementCacheWaitMs: WAIT_MS,
+    unsafePlacementCacheWait: true,
     onPlacementChange: () => {
       changes.push(performance.now());
       onChange?.();

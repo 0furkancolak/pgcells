@@ -9,13 +9,17 @@ import {
 import { type Kind, type Placement, placementColumns, placementSchema, type Status, tenantSchema, validateTenantId } from "./model";
 
 export function createPlatform(pools: Pick<Pools, "platform" | "nodeConfig">) {
-  /** Fixed SQL text and bound values; rows are validated as stored state. */
-  async function select(clause: string, values: unknown[]) {
-    const rows = await pools.platform.query(`SELECT ${placementColumns} ${clause}`, values);
+  /** Fixed SQL text and bound values; rows are validated as stored state. `from`: the primary by default, or a read replica of it. */
+  async function select(clause: string, values: unknown[], from: Pick<Connection, "query"> = pools.platform) {
+    const rows = await from.query(`SELECT ${placementColumns} ${clause}`, values);
     return rows.map((row) => parseDatabaseValue(placementSchema, row));
   }
+  /** `undefined` if there is no such record (on a replica this can also mean it has not replicated yet). */
+  async function find(tenantId: string, from?: Pick<Connection, "query">) {
+    return (await select("FROM platform.placements p WHERE p.tenant_id=$1", [validateTenantId(tenantId)], from))[0];
+  }
   async function get(tenantId: string) {
-    const [placement] = await select("FROM platform.placements p WHERE p.tenant_id=$1", [validateTenantId(tenantId)]);
+    const placement = await find(tenantId);
     if (!placement) throw new AppError("TENANT_NOT_FOUND", "tenant not found");
     return placement;
   }
@@ -27,7 +31,7 @@ export function createPlatform(pools: Pick<Pools, "platform" | "nodeConfig">) {
       [databaseId, after, limit],
     );
   }
-  return { get, listPage };
+  return { get, find, listPage };
 }
 
 /** Upper bound of a tenant's size (capacity unit). */

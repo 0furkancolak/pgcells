@@ -45,7 +45,7 @@ export const pooledConfig = () =>
   );
 
 export const createTestManagement = (options: ManagementOptions = {}, config: Config = directConfig()) =>
-  createManagement(config, { driver, placementCacheWaitMs: 1, ...options });
+  createManagement(config, { driver, placementCacheWaitMs: 1, unsafePlacementCacheWait: true, ...options });
 
 /** Runtime through PgBouncer transaction pooling plus a direct management context. */
 export function createTestRuntime(options: ManagementOptions = {}) {

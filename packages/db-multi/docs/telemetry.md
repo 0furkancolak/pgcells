@@ -53,6 +53,7 @@ In Sentry the `op` is: names starting with `db.` as they are (`db.query`), the o
 |---|---|---|---|
 | `placement.read` | runtime | The placement was read from the platform database | `db.placement` |
 | `placement.cache` | runtime | An in-process cache hit (`ms` = 0) | `db.placement` |
+| `placement.stale` | runtime | The directory was unreachable and an expired `active` placement was served (`staleIfErrorMs`); `error` carries the code when the read just failed | `db.placement` |
 | `db.acquire` | runtime, management | Waiting for a connection from the pool | `db.acquire` |
 | `db.query` | runtime | A single query outside a transaction | `db.query` |
 | `db.transaction` | runtime, management | `BEGIN … COMMIT` | `db.transaction` |

@@ -49,6 +49,7 @@ If `onSpan` is not given there is no extra cost (not even an additional `await` 
 |---|---|---|
 | `placement.read` | runtime | The placement was read from the platform database |
 | `placement.cache` | runtime | An in-process cache hit (`ms` = 0) |
+| `placement.stale` | runtime | An expired `active` placement served because the directory was unreachable (`staleIfErrorMs`) |
 | `db.acquire` | runtime, management | Waiting for a connection from the pool |
 | `db.query` | runtime | A single query outside a transaction |
 | `db.transaction` | runtime, management | `BEGIN … COMMIT` |
@@ -57,7 +58,7 @@ If `onSpan` is not given there is no extra cost (not even an additional `await` 
 | `provision.pick`, `provision.claim`, `provision.schema`, `provision.activate` | management | Provision steps: placement selection, placement record, schema creation, activation |
 | `migration` | management | A migration (`detail` = migration ID) |
 | `seed` | management | A seed (`detail` = seed ID) |
-| `move.maintenance`, `move.copying`, `move.validated`, `move.cutover` | management | Move phases (`move.maintenance` includes waiting for the placement cache) |
+| `move.maintenance`, `move.copying`, `move.validated`, `move.cutover`, `move.fenced` | management | Move phases (`move.maintenance` includes waiting for the placement cache) |
 | `backup.tenant` | management | A tenant's backup (`detail` = `written` / `unchanged`) |
 
 ## Benchmark commands

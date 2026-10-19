@@ -1,9 +1,9 @@
 /** Runtime factory: pools, placement reads (with a short in-process cache) and the tenant context. It does not load the management, parser, tools or driver
  * modules. */
-import { type Config, type DatabaseNode, type DatabaseOptions, loadConfig, replicaPolicy, runtimeSettings } from "./config";
+import { type Config, type DatabaseNode, type DatabaseOptions, loadConfig, PLATFORM_DATABASE_ID, replicaPolicy, runtimeSettings } from "./config";
 import { createPools, reportSpan, type SpanHandler, spanner } from "./database";
 import type { Driver } from "./driver";
-import { AppError, databaseUnavailable } from "./errors";
+import { AppError, databaseUnavailable, errorCode } from "./errors";
 import { PLATFORM_SCHEMA } from "./sql/query";
 import { createWithTenant, createWithTenantRead, runContext, type TenantContext } from "./tenants/context";
 import type { Placement } from "./tenants/model";
@@ -25,10 +25,15 @@ export interface RuntimeOptions extends DatabaseOptions {
 const PLACEMENT_CACHE_ENTRIES = 10_000;
 /** The maximum number of jobs waiting for a connection per DB; `DATABASE_BUSY` if exceeded. */
 const RUNTIME_MAX_PENDING = 64;
+/** After a directory failure, how long stale placements are served before the directory is asked again. */
+const DIRECTORY_RETRY_MS = 2000;
+/** Failures that mean "the directory cannot answer" (connection errors, deadlines): the only ones a stale placement may cover. */
+const directoryUnreachable = (error: unknown) => databaseUnavailable(error) || errorCode(error) === "DATABASE_TIMEOUT";
 
 /** In-process placement cache: only an `active` placement is kept, for `ttlMs`; when full, the oldest entry is evicted. Invalidation
- * advances the counter: a read of a tenant invalidated after the `epoch()` taken before the read started is not written to the cache. */
-function activePlacementCache(maxEntries: number, ttlMs: number) {
+ * advances the counter: a read of a tenant invalidated after the `epoch()` taken before the read started is not written to the cache.
+ * `staleMs`: an expired entry can still be returned by `stale()` for that long (stale-if-error; the caller decides when). */
+function activePlacementCache(maxEntries: number, ttlMs: number, staleMs = 0) {
   const entries = new Map<string, { placement: Placement; expires: number }>();
   // Tenant → counter of the last invalidation, at most `maxEntries`. The counter of an evicted record becomes `floor`: every read that started before it is rejected.
   const invalidated = new Map<string, number>();
@@ -39,6 +44,11 @@ function activePlacementCache(maxEntries: number, ttlMs: number) {
     hit(tenantId: string): Placement | undefined {
       const entry = entries.get(tenantId);
       return entry && entry.expires > performance.now() ? entry.placement : undefined;
+    },
+    /** An expired `active` entry that is still inside the stale window; never an invalidated or non-active one (those are removed). */
+    stale(tenantId: string): Placement | undefined {
+      const entry = staleMs > 0 ? entries.get(tenantId) : undefined;
+      return entry && entry.expires + staleMs > performance.now() ? entry.placement : undefined;
     },
     epoch: () => epoch,
     /** Replaces the old entry with the placement that was read (only deletes it if not active) and returns the placement; if the read was invalidated
@@ -78,7 +88,31 @@ function openDatabase(input: Config, { driver, onSpan, pooler = "verified", repl
 
   // After `migrating`, a move waits longer than `placementCacheMs` (`PLACEMENT_CACHE_MAX_MS`), so the cache never lets any request
   // write to the old DB of the tenant being moved.
-  const cache = activePlacementCache(PLACEMENT_CACHE_ENTRIES, config.placementCacheMs);
+  const cache = activePlacementCache(PLACEMENT_CACHE_ENTRIES, config.placementCacheMs, config.staleIfErrorMs);
+  const replicaRouter = createReplicaRouter({ pools, maxLagMs: config.replicaMaxLagMs, statusMs: config.replicaStatusMs });
+  const hasDirectoryReplicas = config.nodes.some((node) => node.id === PLATFORM_DATABASE_ID && node.replicas.length > 0);
+  /** One directory lookup. With db0 replicas an `active` record comes from a usable replica; anything else (not active, not found yet, no usable
+   * replica, replica error) is answered by the primary, which is the only authority for `migrating`/`maintenance`. The error policy for tenant reads
+   * does not apply here: a directory lookup is tiny and cached, and the replica is only an offload. */
+  async function readDirectory(tenantId: string): Promise<Placement> {
+    const handle = hasDirectoryReplicas ? await replicaRouter.pick(PLATFORM_DATABASE_ID) : undefined;
+    if (handle) {
+      try {
+        const found = await platform.find(tenantId, handle.db);
+        if (found?.status === "active") return found;
+      } catch (error) {
+        if (databaseUnavailable(error)) handle.markDown();
+      }
+    }
+    return platform.get(tenantId);
+  }
+  /** After a directory failure, stale entries are served without asking the directory again for this long, so an outage does not add a connection wait to every request. */
+  let directoryDownAt = Number.NEGATIVE_INFINITY;
+  const useStale = (tenantId: string, error?: unknown): Placement | undefined => {
+    const stale = cache.stale(tenantId);
+    if (stale && onSpan) reportSpan(onSpan, { name: "placement.stale", startTime: Date.now(), ms: 0, tenantId, ...(error ? { error: errorCode(error) } : {}) });
+    return stale;
+  };
   /** Returns synchronously on a hit (no Promise). */
   function placement(tenantId: string): Placement | Promise<Placement> {
     const cached = cache.hit(tenantId);
@@ -86,14 +120,25 @@ function openDatabase(input: Config, { driver, onSpan, pooler = "verified", repl
       if (onSpan) reportSpan(onSpan, { name: "placement.cache", startTime: Date.now(), ms: 0, tenantId });
       return cached;
     }
+    if (config.staleIfErrorMs > 0 && performance.now() - directoryDownAt < DIRECTORY_RETRY_MS) {
+      const stale = useStale(tenantId);
+      if (stale) return stale;
+    }
     const readEpoch = cache.epoch();
-    return timed("placement.read", () => platform.get(tenantId), { tenantId }).then((read) => cache.store(tenantId, read, readEpoch));
+    const read = timed("placement.read", () => readDirectory(tenantId), { tenantId }).then((placed) => cache.store(tenantId, placed, readEpoch));
+    if (config.staleIfErrorMs === 0) return read;
+    return read.catch((error: unknown) => {
+      if (!directoryUnreachable(error)) throw error;
+      directoryDownAt = performance.now();
+      const stale = useStale(tenantId, error);
+      if (!stale) throw error;
+      return stale;
+    });
   }
   /** Invalidates the placement in this process immediately (e.g. when an `onPlacementChange` broadcast is received); an in-flight read is not written to the cache either. */
   const invalidatePlacement = cache.invalidate;
 
   const withTenant = createWithTenant(pools, { get: placement });
-  const replicaRouter = createReplicaRouter({ pools, maxLagMs: config.replicaMaxLagMs, statusMs: config.replicaStatusMs });
   /** `src/queries/tenant/` read queries go to a replica; see `docs/replicas.md`. */
   const withTenantRead = createWithTenantRead(pools, { get: placement }, replicaRouter, onUnavailable);
   /** Replica status (health, lag, availability); probes without consulting the cache. Contains no URL. */

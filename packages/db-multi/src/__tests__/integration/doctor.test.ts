@@ -4,6 +4,7 @@ import type { Database } from "../../core/database";
 import { bootstrap, type Management, provisionTenant } from "../../management";
 import { nodeMigrations, platformMigrations } from "../../core/migrations/registry";
 import { doctor } from "../../core/tools/doctor";
+import { movedSchemaName } from "../../core/tenants/model";
 import { startMove } from "../../core/tools/move";
 import { createTestManagement, directConfig, integration, q, raw } from "./helpers";
 
@@ -134,7 +135,7 @@ integration("database positions are identities: reordered, shrunk or replaced UR
   }),
 );
 
-integration("doctor passes after a completed move", () =>
+integration("doctor passes after a completed move and lists the fenced source copy", () =>
   withIsolatedPlatform(2, async (app, config) => {
     await provisionTenant(app, "doctor-moved", "db0");
     const move = await startMove(app, "doctor-moved", "db1", true);
@@ -142,5 +143,21 @@ integration("doctor passes after a completed move", () =>
     const result = await diagnose(config);
     expect(result.checks.filter((check) => !check.ok)).toEqual([]);
     expect(result.ok).toBe(true);
+    const retained = result.checks.find((check) => check.target === "db0" && check.check === "retained_moved_copies");
+    expect(retained?.detail).toContain(movedSchemaName("tenant_doctor_moved", move.id));
+  }),
+);
+
+integration("doctor fails while a moved-away tenant's own schema name still exists on its old node", () =>
+  withIsolatedPlatform(2, async (app, config) => {
+    await provisionTenant(app, "doctor-legacy", "db0");
+    await startMove(app, "doctor-legacy", "db1", true);
+    const old = app.pools.node("db0");
+    await old.exec(`CREATE SCHEMA ${q("tenant_doctor_legacy")}`); // what a move completed before fencing would have left behind
+    const result = await diagnose(config);
+    expect(result.checks).toContainEqual(expect.objectContaining({ target: "db0", check: "unfenced_moved_copies", ok: false }));
+    expect(result.ok).toBe(false);
+    await old.exec(`DROP SCHEMA ${q("tenant_doctor_legacy")}`);
+    expect((await diagnose(config)).ok).toBe(true);
   }),
 );

@@ -1,8 +1,8 @@
 /** Moves a tenant to another database; continues an interrupted move or rolls it back before the DB switch.
  *
  * Flow: planned → maintenance (placement `migrating`) → copying → validated → cutover (placement `maintenance` on the target) →
- * completed (placement `active`). Every step runs under the tenant lock, the node locks, and the ownership of placement.move_operation_id
- * and moves.owner_id. */
+ * fenced (the source schema is renamed, so a writer holding a stale placement fails with 42P01) → completed (placement `active`). Every
+ * step runs under the tenant lock, the node locks, and the ownership of placement.move_operation_id and moves.owner_id. */
 import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
 import { type Database, stopwatch } from "../database";
@@ -10,7 +10,7 @@ import type { Connection } from "../driver";
 import { AppError, errorCode, parseDatabaseValue } from "../errors";
 import type { Management } from "../management";
 import { ownershipCheck, withNodeLocks, withTenantLock } from "../operations/locks";
-import { type Placement, placementSchema, quoteIdentifier } from "../tenants/model";
+import { movedSchemaName, type Placement, placementSchema, quoteIdentifier } from "../tenants/model";
 import { schemaExists } from "../tenants/nodes";
 import { copySchema, fingerprint } from "./copy";
 
@@ -144,7 +144,9 @@ export function resumeMove(m: Management, id: string, writersDrained?: boolean) 
       await claim(platform, SAVE_CHECKPOINT, [phase, savedFingerprint, id, ownerId], () => recordChanged("checkpoint"));
     };
     try {
-      const placement = await copyAndCutover(m, op, { assertOwned, checkpoint, signal });
+      const run = { assertOwned, checkpoint, signal };
+      const placement = await copyAndCutover(m, op, run);
+      await fence(m, op, run);
       await assertOwned();
       // The target schema is live now; release the reservation so a later move back is not blocked.
       await m.pools.node(op.targetDatabaseId).query("DELETE FROM platform.move_targets WHERE tenant_id=$1 AND operation_id=$2", [op.tenantId, id]);
@@ -234,6 +236,21 @@ async function cutover(m: Management, op: Move, { assertOwned, checkpoint }: Mov
   await m.platform.changed(tenantId);
   await checkpoint("cutover");
   return m.platform.get(tenantId);
+}
+
+/** Renames the source schema to `movedSchemaName` once the placement points at the target. A process that still caches the old placement
+ * then gets `undefined_table` instead of silently writing to a copy nobody reads; the data stays inspectable under the new name. Re-running is
+ * safe: a missing source schema (already renamed or dropped) is skipped. */
+async function fence(m: Management, op: Move, { assertOwned, checkpoint }: MoveRun) {
+  const { schemaName: from, databaseId } = op.source;
+  const retained = movedSchemaName(from, op.id);
+  await assertOwned();
+  await m.pools.node(databaseId).transaction(async (tx) => {
+    if (!(await schemaExists(tx, from))) return;
+    if (await schemaExists(tx, retained)) throw new AppError("INVALID_DATABASE_STATE", `Cannot fence ${databaseId}: ${retained} already exists`);
+    await tx.exec(`ALTER SCHEMA ${quoteIdentifier(from)} RENAME TO ${quoteIdentifier(retained)}`);
+  });
+  await checkpoint("fenced");
 }
 
 export function rollbackMove(m: Management, id: string, writersDrained?: boolean): Promise<void> {

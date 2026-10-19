@@ -97,11 +97,11 @@ The directory (`platform.placements`, `platform.nodes`, `platform.tenants`) answ
 
 The staleness bound matters because moves rely on it: after a move marks the placement `migrating`, the mover waits `placementCacheWaitMs` (30 s) so that no process can still hold the old `active` record ✅.
 
-**Making the directory survive regions** 🔜. Today the directory lives on `db0` in one region. If that region is unreachable, cached tenants keep working for at most the cache TTL, then every placement read fails. The plan:
+**Making the directory survive regions** ✅. The directory lives on `db0` in one region. If that region is unreachable, cached tenants keep working for the cache TTL, then (with `staleIfErrorMs` set) for the stale window you chose, and then placement reads fail. What exists:
 
-- A physical read replica of `db0` in each region, configured through the existing `DATABASE_REPLICA_URLS` mechanism. Directory reads for `active` placements may use it; anything not `active` or not found is confirmed on the primary.
-- Because replica lag adds to staleness, `placementCacheWaitMs` must be at least `PLACEMENT_CACHE_MAX_MS + replicaMaxLagMs`; the package will enforce it.
-- **Stale-if-error:** when the directory is unreachable, an expired `active` placement may be served for a bounded extra time. This is only safe together with *fencing* (section 7), so it ships after it.
+- A physical read replica of `db0` in each region, configured through the existing `DATABASE_REPLICA_URLS` mechanism (`db0=…`). Directory reads for `active` placements use it; anything not `active` or not found is confirmed on the primary ✅.
+- Because replica lag adds to staleness, `placementCacheWaitMs` must be at least `PLACEMENT_CACHE_MAX_MS + replicaMaxLagMs`; `createManagement` enforces it (`INVALID_CONFIG`) ✅.
+- **Stale-if-error** (`staleIfErrorMs`, off by default, at most 5 minutes): when the directory is unreachable, an expired `active` placement is served for a bounded extra time. It is safe because of *fencing* (section 7): a process that is stale anyway cannot write to a moved tenant's old copy ✅. `migrating` and `maintenance` records are never cached, so they are never served stale.
 - Writes to the directory (create tenants, move tenants, register nodes) go to the `db0` primary only. While `db0` is down a remote region cannot create or move tenants; serving existing tenants continues. `db0` failover is the database provider's job; pgcells does not promote.
 
 Keep personal data out of the directory 🔜: `platform.tenants` may carry application columns (for example `owner_email`). They are allowed, but `doctor` warns, because the directory lives in one region.
@@ -138,7 +138,7 @@ stateDiagram-v2
   maintenance --> copying: reserve target schema
   copying --> validated: fingerprints match
   validated --> cutover: placement_version + 1 on target
-  cutover --> fenced: planned, source schema locked
+  cutover --> fenced: source schema renamed
   fenced --> completed: placement = active
   copying --> failed
   validated --> failed
@@ -150,7 +150,7 @@ stateDiagram-v2
 
 Today ✅ the move is correct but **offline**: the tenant is unavailable from `maintenance` until `completed`, and rows travel as JSON batches through the operator's process. It is verified for small tenants (e2e: 3.5 k rows, 30.7 s of which 30 s is the safety wait); no measurement for large tenants exists yet, so plan for hours at the gigabyte scale.
 
-**Fencing** 🔜. The safety wait bounds how stale a cached placement can be, but nothing on the *data path* stops a process that is stale anyway (long pause, partitioned from Redis, custom placement source) from writing to the old copy after cutover; the write would succeed and be lost. After cutover the mover therefore **renames the source schema** (`tenant_acme` → `tenant_acme__moved_<id>`): a stale writer fails with `undefined_table` instead of silently writing. Rename (not `REVOKE`) because runtime and management share a role and because it works on every provider. It costs nothing on the hot path (no per-query version check). The renamed copy stays inspectable; moving back is a normal new move.
+**Fencing** ✅. The safety wait bounds how stale a cached placement can be, but nothing on the *data path* stops a process that is stale anyway (long pause, partitioned from Redis, custom placement source) from writing to the old copy after cutover; the write would succeed and be lost. After cutover the mover therefore **renames the source schema** (`tenant_acme` → `tenant_acme__moved_<id>`): a stale writer fails with `undefined_table` instead of silently writing. Rename (not `REVOKE`) because runtime and management share a role and because it works on every provider. It costs nothing on the hot path (no per-query version check). The renamed copy stays inspectable; moving back is a normal new move, and `doctor` lists the copies (`retained_moved_copies`) and warns about old ones that kept the tenant's own name (`unfenced_moved_copies`).
 
 **Zero-downtime move** 🔜 (later): initial snapshot + logical replication catch-up, then a write pause of seconds for the cutover. Targets: plain PostgreSQL 16, a tenant up to 50 GB, pause ≤ 5 s. Provider support depends on `wal_level = logical`, primary keys (or `REPLICA IDENTITY FULL`), and sequence sync at cutover ⚠️; the support matrix will say "supported / restricted / unsupported" per provider.
 
@@ -187,9 +187,9 @@ Replica selection is round-robin among healthy, caught-up replicas ✅; 🔜 eac
 | A cell's primary is down | Only that cell's tenants fail (`DATABASE_UNAVAILABLE`/`DATABASE_TIMEOUT` within ~7 s); others are fine ✅ (e2e 8) | Same, plus documented promote-DR runbook 🔜 |
 | Pooler fleet down | Same as cell down for that region ✅ | ≥ 2 poolers per cell, documented; failover drill in CI-style test 🔜 |
 | Redis down | Falls back to process cache then directory; sessions fail open ✅ (e2e 10) | Same |
-| `db0` / directory unreachable | Cached tenants work ≤ cache TTL (5–25 s), then placement reads fail for everyone; no provisioning or moves | Directory replicas + stale-if-error after fencing 🔜 |
-| Whole region down | Its tenants are unavailable; other regions fine **if** they can still reach the directory | DR promotion in the zone; directory replicas 🔜 |
-| Stale placement after a move | Bounded by TTL + 30 s wait, but no data-path guard ⚠️ | Fencing 🔜 |
+| `db0` / directory unreachable | Cached tenants work for the cache TTL (5–25 s) plus `staleIfErrorMs` (if set), then placement reads fail for everyone; no provisioning or moves ✅ | Same; a replica of `db0` in each region answers `active` lookups meanwhile ✅ |
+| Whole region down | Its tenants are unavailable; other regions fine **if** they can still reach the directory (a directory replica or `staleIfErrorMs` covers it) ✅ | DR promotion in the zone 🔜 |
+| Stale placement after a move | Bounded by TTL + wait, and a stale writer fails with `undefined_table` after cutover (fencing) ✅ | Same |
 | Wrong-region request | Works, slowly, across regions | `421`/`307` or hook 🔜 |
 
 ## 11. Capacity and noisy neighbours
@@ -220,8 +220,8 @@ Replica selection is round-robin among healthy, caught-up replicas ✅; 🔜 eac
 | Node `region`/labels/`residency_zone`, tenant `home_region`, residency checks | 🔜 |
 | `regionGuard` / `onWrongRegion`, `createDatabase({ region })` | 🔜 |
 | Replica locality | 🔜 |
-| Fencing at cutover | 🔜 |
-| Directory replicas, stale-if-error | 🔜 |
+| Fencing at cutover | ✅ |
+| Directory replicas, stale-if-error | ✅ |
 | Causal read tokens | 🔜 |
 | Zero-downtime move, DR promote runbook | 🔜 |
 | Multi-region behaviour on real providers/networks | ⚠️ |

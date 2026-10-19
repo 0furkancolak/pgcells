@@ -29,6 +29,8 @@ A read-only production check. The output is `{ ok, checks: [{ target, check, ok,
 | `active_placements` | platform | An active record pointing at an unknown database, not following the ID/schema rules, or waiting for a migration; bulk operations stop at these records |
 | `migration_recovery` | platform | A leftover runner record; [recovery](migrations-and-seeds.md#recovering) |
 | `operational_states` | platform | Information: the number of tenants that are not active and that own a move (always `ok`) |
+| `retained_moved_copies` | each database | Information (always `ok`): the fenced source copies `…__moved_<id>` that completed moves left on this node. They hold pre-move data; drop them when no longer needed |
+| `unfenced_moved_copies` | each database | A tenant that moved away still has a schema with its own name on its old node (a move completed before fencing existed). A process with a stale placement could still write to it; rename it (`ALTER SCHEMA "tenant_x" RENAME TO "tenant_x__moved_00000000"`) or drop it |
 | `replica_reachable`, `replica_in_recovery`, `replica_lag`, `replica_identity`, `replica_runtime_timeouts`, `replica_pooled` | each replica (`db0#1`) | Replica checks; details: [replicas.md](replicas.md#doctor-checks) |
 | `pooled_runtime` | each database | If `--pooled-urls` is given: the runtime URL does not go to a transaction-mode pooler (it gives `POOLER_REQUIRED` at runtime). The option takes no value; the URLs (`DATABASE_URLS` format, the same count and order) are asked through hidden input and do not end up in argv. If the count does not match, `INVALID_CONFIG` |
 | `global_pool_mode` | pgbouncer | Extra information specific to PgBouncer: if `--pgbouncer-url` is given: the global `pool_mode` is not `transaction`. The option takes no value; the console URL (`postgres://…/pgbouncer`) is asked through hidden input and does not end up in argv or the shell history |
@@ -77,13 +79,14 @@ Before the move, stop **all** application and background jobs that write to that
 
 ### Flow
 
-`planned → maintenance → copying → validated → cutover → completed`
+`planned → maintenance → copying → validated → cutover → fenced → completed`
 
 1. **maintenance:** the placement becomes `migrating` and `onPlacementChange` is called. Then **`placementCacheWaitMs` (default 30 s) is waited**: every process that holds an `active` record in its cache, including those without a hook (e.g. the CLI, an application not connected to Redis), drops it in this time. During this time reads may keep returning from the source database with the cached placement; when the cache expires, requests get `TENANT_UNAVAILABLE`.
 2. **copying:** the schema name is reserved on the target and the data is copied from the source snapshot (repeatable read). The data is moved as driver-independent bulk JSON (a cursor + `row_to_json` on the source, `json_populate_recordset` batches of 500 rows on the target). Cancellation and the time limit are checked between batches/statements; the target transaction is rolled back.
 3. **validated:** the target's fingerprint is compared with the source's (`COPY_MISMATCH`).
 4. **cutover:** the placement switches to the target database (`placement_version` increases, status `maintenance`), and `onPlacementChange` is called.
-5. **completed:** the placement is `active`. The source schema is **not deleted automatically**.
+5. **fenced:** the source schema is renamed from `tenant_x` to `tenant_x__moved_<first 8 hex of the move id>` (a name too long for PostgreSQL is shortened before the marker). From here a process that still routes by the old placement fails with `undefined_table` (42P01) instead of silently writing to a copy nobody reads. The data stays inspectable under the new name; nothing is deleted. Re-running the phase is safe (a source that is already renamed is skipped).
+6. **completed:** the placement is `active`. The renamed source schema is **not deleted automatically**.
 
 Each step runs under the tenant and node locks and the ownership of `placements.move_operation_id` and the move record. While there is an unfinished move, a new `move` for the same tenant is rejected (`MOVE_UNFINISHED`).
 
@@ -93,8 +96,8 @@ Each step runs under the tenant and node locks and the ownership of `placements.
 |---|---|
 | Error before the database switch (cutover) | `resume-move` or `rollback-move` |
 | Error after the database switch | `resume-move` (rollback is rejected with `ROLLBACK_NOT_ALLOWED`) |
-| Completed | Inspect the source schema and delete it by hand: `DROP SCHEMA "tenant_…" CASCADE` on the source database |
-| `TARGET_EXISTS` | The target has an old schema of the same name (e.g. a copy left from a previous move) and it is not taken over: inspect the data, run the `DROP SCHEMA … CASCADE` command in the message on that database and try again |
+| Completed | Inspect the fenced copy `tenant_…__moved_<id>` on the source database and drop it when you no longer need it: `DROP SCHEMA "tenant_…__moved_…" CASCADE`. `doctor` lists it as `retained_moved_copies`. Moving the tenant back needs no cleanup: the tenant's own schema name is free again on that database |
+| `TARGET_EXISTS` | The target has a schema of the tenant's own name (for example a copy left by a move that completed before fencing existed, or a manual restore) and it is not taken over: inspect the data, run the `DROP SCHEMA … CASCADE` command in the message on that database and try again |
 | `TARGET_RESERVED` | The target schema is reserved for another unfinished move; complete or roll back that move |
 | `SAME_DATABASE` | The tenant is already on the target |
 

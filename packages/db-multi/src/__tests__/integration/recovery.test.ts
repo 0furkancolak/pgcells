@@ -3,6 +3,8 @@ import { bootstrap, type Management, migrateTenant, provisionTenant } from "../.
 import { openManagementSession, withTenantLock } from "../../core/operations/locks";
 import { tenantMigrations } from "../../core/migrations/registry";
 import { getMove, resumeMove, rollbackMove, startMove } from "../../core/tools/move";
+import { movedSchemaName } from "../../core/tenants/model";
+import { schemaExists } from "../../core/tenants/nodes";
 import { createTestManagement, enabled, integration, q, removeTenants, uniqueEmail } from "./helpers";
 
 let app: Management;
@@ -129,6 +131,26 @@ integration("failure after cutover resumes activation and refuses rollback", asy
   expect((await app.platform.get(id)).databaseId).toBe(targetId);
   expect(await target.query(`SELECT name FROM ${q(before.schemaName, "users")}`)).toEqual([{ name: "Retained" }]);
 });
+integration("failure right after fencing resumes without renaming twice", async () => {
+  const { id, moveId, before, targetId, target } = await planned("fenced");
+  await app.pools
+    .node(before.databaseId)
+    .query(`INSERT INTO ${q(before.schemaName, "users")} (name,email) VALUES ('Retained',$1)`, [uniqueEmail()]);
+  const clean = await failPhase(moveId, "fenced");
+  try {
+    await expect(resumeMove(app, moveId, drained)).rejects.toThrow("injected checkpoint crash");
+  } finally {
+    await clean();
+  }
+  // The source is already renamed; the stale tenant name is gone while the move is still unfinished.
+  expect(await schemaExists(app.pools.node(before.databaseId), before.schemaName)).toBe(false);
+  await resumeMove(app, moveId, drained);
+  const done = await getMove(app, moveId);
+  expect(done.status).toBe("completed");
+  expect((await app.platform.get(id)).databaseId).toBe(targetId);
+  expect(await target.query(`SELECT name FROM ${q(before.schemaName, "users")}`)).toEqual([{ name: "Retained" }]);
+  expect(await app.pools.node(before.databaseId).query(`SELECT name FROM ${q(movedSchemaName(before.schemaName, moveId), "users")}`)).toEqual([{ name: "Retained" }]);
+});
 integration("placement owner resumes a pre-cutover failure", async () => {
   const { id, moveId, targetId } = await planned("resume");
   const clean = await failPhase(moveId, "copying");
@@ -191,14 +213,10 @@ integration("unfinished moves block new intents until rolled back or completed",
   expect(next.status).toBe("completed");
   expect(next.id).not.toBe(moveId);
   expect((await app.platform.get(id)).databaseId).toBe(targetId);
-  let reverseId = "";
-  await expect(
-    startMove(app, id, before.databaseId, drained, (move) => {
-      reverseId = move.id;
-    }),
-  ).rejects.toThrow("Target schema exists");
-  await rollbackMove(app, reverseId, drained);
-  expect((await app.platform.get(id)).databaseId).toBe(targetId);
+  // The completed move fenced its source under a marker name, so the reverse move finds the tenant's own name free.
+  const reverse = await startMove(app, id, before.databaseId, drained);
+  expect(reverse.status).toBe("completed");
+  expect((await app.platform.get(id)).databaseId).toBe(before.databaseId);
   expect((await app.platform.get(id)).status).toBe("active");
 });
 

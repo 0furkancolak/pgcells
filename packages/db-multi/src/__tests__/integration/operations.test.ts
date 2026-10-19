@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, expect } from "bun:test";
 import { bootstrap, type Management, migrateTenant, migrationStatus, provisionTenant } from "../../management";
 import { startMove } from "../../core/tools/move";
+import { movedSchemaName } from "../../core/tenants/model";
+import { schemaExists } from "../../core/tenants/nodes";
 import { createTestManagement, enabled, integration, q, removeTenants, uniqueEmail } from "./helpers";
 
 let app: Management;
@@ -31,7 +33,7 @@ integration("direct provision is idempotent and migration preserves data", async
   expect((await db.query<{ name: string }>(`SELECT name FROM ${q(p.schemaName, "users")}`))[0]?.name).toBe("Ada");
   expect((await app.platform.get(id)).status).toBe("active");
 });
-integration("move retains source, clears ownership and can move back after the retained schema is dropped", async () => {
+integration("move fences the source under a retained name, clears ownership and moves back without manual cleanup", async () => {
   const id = `${prefix}-move`;
   await provisionTenant(app, id, "db0");
   const before = await app.platform.get(id);
@@ -42,6 +44,7 @@ integration("move retains source, clears ownership and can move back after the r
   const drained = true;
   const move = await startMove(app, id, "db1", drained);
   expect(move.status).toBe("completed");
+  expect(move.phase).toBe("completed");
   const after = await app.platform.get(id);
   expect(after.placementVersion).toBe(before.placementVersion + 1);
   expect(after.databaseId).toBe("db1");
@@ -51,18 +54,11 @@ integration("move retains source, clears ownership and can move back after the r
   ).toEqual([{ owner: null }]);
   const target = app.pools.node(after.databaseId);
   expect(await names(target, after.schemaName)).toBe("Retained");
-  expect(await names(source, before.schemaName)).toBe("Retained");
-  // The retained source is never adopted: the reverse move stops with a
-  // clear error, is rolled back, and succeeds after the documented DROP.
-  let refused = "";
-  await expect(
-    startMove(app, id, "db0", drained, (m) => {
-      refused = m.id;
-    }),
-  ).rejects.toMatchObject({ code: "TARGET_EXISTS" });
-  const { rollbackMove } = await import("../../core/tools/move");
-  await rollbackMove(app, refused, drained);
-  await source.exec(`DROP SCHEMA ${q(before.schemaName)} CASCADE`);
+  // The source keeps its data under a marker name; the tenant's own name is gone, so a stale writer fails with undefined_table.
+  const retained = movedSchemaName(before.schemaName, move.id);
+  expect(await names(source, retained)).toBe("Retained");
+  expect(await schemaExists(source, before.schemaName)).toBe(false);
+  // The name is free again: the reverse move needs no DROP and leaves a second retained copy on db1.
   const back = await startMove(app, id, "db0", drained);
   expect(back.status).toBe("completed");
   const final = await app.platform.get(id);
@@ -71,4 +67,5 @@ integration("move retains source, clears ownership and can move back after the r
   for (const db of [source, target])
     expect(await db.query("SELECT tenant_id FROM platform.move_targets WHERE tenant_id=$1", [id])).toHaveLength(0);
   expect(await names(source, before.schemaName)).toBe("Retained");
+  expect(await names(target, movedSchemaName(after.schemaName, back.id))).toBe("Retained");
 });

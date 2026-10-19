@@ -53,8 +53,20 @@ export function replicaPolicy(value: unknown = "primary"): ReplicaPolicy {
   if (value === "primary" || value === "error") return value;
   throw new AppError("INVALID_CONFIG", 'replicaOnUnavailable must be "primary" or "error"');
 }
-export type DatabaseOptions = Partial<Values<typeof RUNTIME_LIMITS>> & { replicaOnUnavailable?: ReplicaPolicy };
-export type ManagementOptions = Partial<Values<typeof MANAGEMENT_LIMITS>>;
+/** Upper limit of `staleIfErrorMs`. */
+export const STALE_IF_ERROR_MAX_MS = 300_000;
+export type DatabaseOptions = Partial<Values<typeof RUNTIME_LIMITS>> & {
+  replicaOnUnavailable?: ReplicaPolicy;
+  /** How long past its expiry a cached `active` placement may still be used while the directory (`db0`) is unreachable (connection errors and timeouts only).
+   * Default 0 = off. Safe because a move renames the source schema at cutover, so a process that routes by an outdated record gets `undefined_table`
+   * instead of writing to a copy nobody reads; `migrating` and `maintenance` records are never cached, so they are never served stale. */
+  staleIfErrorMs?: number;
+};
+export type ManagementOptions = Partial<Values<typeof MANAGEMENT_LIMITS>> & {
+  /** Lets `placementCacheWaitMs` be shorter than the placement caches can live. Only for throwaway environments (tests, local demos): a process whose cache
+   * still shows the old database could otherwise write to a tenant that was already moved or reset. */
+  unsafePlacementCacheWait?: boolean;
+};
 export type ManagementSettings = Config & Values<typeof MANAGEMENT_LIMITS>;
 
 /** Accepts a number or a digit string (CLI) in the range 1..max. */
@@ -135,8 +147,26 @@ function settings<T extends Limits>(limits: T, config: Config, options: Partial<
   for (const [key, [fallback, max]] of Object.entries(limits)) values[key] = boundedInteger(options[key] ?? fallback, key, max);
   return values as Config & Values<T>;
 }
-export const runtimeSettings = (config: Config, options: DatabaseOptions = {}) => settings(RUNTIME_LIMITS, config, options);
-export const managementSettings = (config: Config, options: ManagementOptions = {}) => settings(MANAGEMENT_LIMITS, config, options);
+export function runtimeSettings(config: Config, options: DatabaseOptions = {}) {
+  const staleIfErrorMs = options.staleIfErrorMs ?? 0;
+  return {
+    ...settings(RUNTIME_LIMITS, config, options),
+    staleIfErrorMs: staleIfErrorMs === 0 ? 0 : boundedInteger(staleIfErrorMs, "staleIfErrorMs", STALE_IF_ERROR_MAX_MS),
+  };
+}
+/** Management settings. `placementCacheWaitMs` must outlast every placement cache: the longest cache (`PLACEMENT_CACHE_MAX_MS`), plus `replicaMaxLagMs` when `db0`
+ * has replicas, because a directory read served by a replica can itself be that far behind. A smaller value is `INVALID_CONFIG`. */
+export function managementSettings(config: Config, options: ManagementOptions = {}) {
+  const resolved = settings(MANAGEMENT_LIMITS, config, options);
+  const directoryReplicas = config.nodes.find((node) => node.id === PLATFORM_DATABASE_ID)?.replicas.length;
+  const minimum = PLACEMENT_CACHE_MAX_MS + (directoryReplicas ? resolved.replicaMaxLagMs : 0);
+  if (resolved.placementCacheWaitMs < minimum && !options.unsafePlacementCacheWait)
+    throw new AppError(
+      "INVALID_CONFIG",
+      `placementCacheWaitMs must be at least ${minimum} ms (the longest placement cache${directoryReplicas ? " plus replicaMaxLagMs, since db0 has replicas" : ""}) so a stale cached placement cannot outlive a move`,
+    );
+  return resolved;
+}
 
 /** The server stops the running statement of a session whose client has gone away within this interval at the latest (PostgreSQL 14+). A connection whose deadline expires is discarded;
  * on a driver that cannot cancel (Bun SQL), this setting ensures the statement does not commit in the background. */

@@ -92,12 +92,20 @@ Numeric options must be integers between 1 and the upper limit; a value outside 
 | `idleTimeoutSeconds` | 20 | 300 | Time after which an idle connection is closed |
 | `maxLifetimeSeconds` | 300 | 3600 | Maximum lifetime of a connection |
 | `placementCacheMs` | 5000 | 25000 (`PLACEMENT_CACHE_MAX_MS`) | In-process placement cache (`active` records only) |
+| `staleIfErrorMs` | 0 (off) | 300000 | While the directory (`db0`) is unreachable (connection errors and `DATABASE_TIMEOUT` only), an expired `active` placement may be used for this much longer. Never used for `migrating`/`maintenance` records or after `invalidatePlacement`. See [Directory outages](#directory-outages) |
 | `replicaMaxLagMs` | 5000 | 3600000 | Replica reads: a replica whose lag exceeds this is not used ([replicas.md](replicas.md)) |
 | `replicaStatusMs` | 5000 | 60000 | Cache duration of the replica status (health + lag) |
 | `replicaOnUnavailable` | `"primary"` | `"primary"` \| `"error"` | When no healthy replica exists, the read goes to the primary in a `READ ONLY` transaction, or `REPLICA_UNAVAILABLE` |
 | `onSpan` | none | | Measurement callback; see [telemetry.md](telemetry.md) for OpenTelemetry/Sentry |
 
 The fields of the returned object that you will use: `ready()`, `close()`, `withTenant(id, work)`, `withTenant.forPlacement(placement, work)`, `withTenantRead(id, work)`, `replicas()`, `withNode(databaseId, work)`, `withPlatform(work)`, `placement(id)`, `invalidatePlacement(id)`, `platform.get(id)`, `config`. Their use is covered in [queries.md](queries.md) and [tenants.md](tenants.md).
+
+### Directory outages
+
+Placements live in the directory (`platform.placements` on `db0`). Two things keep requests flowing when it is slow or gone:
+
+- **Directory replicas.** If `db0` has replicas (`DATABASE_REPLICA_URLS=db0=…`), a placement lookup asks a healthy, caught-up replica first. An `active` record is used as it is; anything else (`migrating`, `maintenance`, not found yet, no usable replica, a replica error) is confirmed on the primary, which is the only authority for moves. Lookups never fail because a replica is down, even with `replicaOnUnavailable: "error"`: that policy is about tenant reads.
+- **`staleIfErrorMs`.** When the directory cannot be reached, a process that already cached a tenant keeps serving it for up to this long after the cache entry expired (`placement.stale` span). After the first failure the directory is not asked again for 2 s, so an outage does not add a connection wait to every request. This is safe because a completed move renames the source schema: a process that routes by an outdated placement gets `undefined_table` instead of writing to the old copy. Writes to the directory (provision, move, node registration) always need the `db0` primary; while it is down they fail and existing tenants keep working until the stale window ends.
 
 ## Management options (`createManagement`)
 
@@ -123,7 +131,8 @@ It also accepts the numeric options from the runtime table; in addition:
 | `migrationStatementTimeoutMs` | 30000 | 3600000 | `statement_timeout` in management jobs |
 | `migrationLockTimeoutMs` | 1000 | 60000 | `lock_timeout` in management jobs |
 | `shutdownGraceMs` | 10000 | 300000 | How long running jobs are waited for before being cancelled after the cancellation signal |
-| `placementCacheWaitMs` | 30000 | 300000 | How long `move` and `demo-reset` wait after changing the placement before touching the data |
+| `placementCacheWaitMs` | 30000 | 300000 | How long `move` and `demo-reset` wait after changing the placement before touching the data. At least `PLACEMENT_CACHE_MAX_MS` (25000), plus `replicaMaxLagMs` when `db0` has replicas; a smaller value is `INVALID_CONFIG` |
+| `unsafePlacementCacheWait` | `false` | | Allows a `placementCacheWaitMs` below that minimum. For throwaway environments only (tests, local demos) |
 | `pageSize` | 100 | 1000 | Placement page size per database in bulk jobs |
 | `onPlacementChange` | none | | Called after the placement state or database is committed; if it throws, the operation stops (the move stays resumable) |
 | `onSpan` | none | | Durations of the management steps |
@@ -132,7 +141,7 @@ In management, `statementTimeoutMs` is not the connection acquisition time but t
 
 ### Caveats
 
-- **`placementCacheWaitMs` must be longer than the longest placement cache.** The runtime cache (`placementCacheMs`) and the `@0furkancolak/pgcells-redis` placement cache are at most 25 s; the default of 30 s is safe for that reason. Lowering the value below 25 s can let a process whose cache still shows the old database write to the tenant that was moved.
+- **`placementCacheWaitMs` must be longer than the longest placement cache.** The runtime cache (`placementCacheMs`) and the `@0furkancolak/pgcells-redis` placement cache are at most 25 s; the default of 30 s is safe for that reason. If `db0` has read replicas, placement reads may be served by them and be `replicaMaxLagMs` behind, so the minimum is `25000 + replicaMaxLagMs`. The package enforces this: `createManagement` throws `INVALID_CONFIG` for a smaller value (raise `placementCacheWaitMs`, or lower `replicaMaxLagMs`). `unsafePlacementCacheWait: true` disables the check for throwaway environments.
 - **The application's `statementTimeoutMs` and management's `statementTimeoutMs` must be the same.** `bootstrap` writes the server-side timeout with management's value; the application's value is only a client-side deadline.
 
 ## Drivers

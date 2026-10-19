@@ -45,6 +45,17 @@ export const tenantSchema = (tenantId: string, kind: Kind = "tenant"): string =>
 /** The two possible schema names of the same ID; an ID must not already exist in any database under either of them. */
 export const tenantSchemas = (tenantId: string) => kindSchema.options.map((kind) => tenantSchema(tenantId, kind));
 
+/** Marks a source schema that a completed move fenced off: `<schema>__moved_<first 8 hex of the move id>`. */
+export const MOVED_SCHEMA_PATTERN = /^(?:tenant|demo)_[a-z0-9_]*__moved_[0-9a-f]{8}$/;
+const MOVED_MARKER = "__moved_";
+
+/** The name a move gives the source schema at cutover. Tenant IDs hold no `_`, so no real tenant schema contains `__`; a schema that would
+ * overflow 63 bytes is shortened before the marker, which keeps the move id and so the name unique. */
+export function movedSchemaName(schema: string, operationId: string): string {
+  const suffix = `${MOVED_MARKER}${operationId.replaceAll("-", "").slice(0, 8)}`;
+  return `${validateSchema(schema).slice(0, 63 - suffix.length)}${suffix}`;
+}
+
 /** SQL identifiers are never value parameters. */
 export function quoteIdentifier(value: string): string {
   if (!value || value.includes("\0") || new TextEncoder().encode(value).length > 63)

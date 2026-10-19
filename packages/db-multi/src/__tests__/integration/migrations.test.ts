@@ -32,7 +32,7 @@ const ids = [...real, INDEX_ID] as [string, string, string, string];
 let copy: Awaited<ReturnType<typeof packageCopy>>;
 let pkg: typeof ManagementModule;
 let ext: Management;
-const createCopyManagement = (options = {}) => pkg.createManagement(directConfig(), { driver, placementCacheWaitMs: 1, ...options });
+const createCopyManagement = (options = {}) => pkg.createManagement(directConfig(), { driver, placementCacheWaitMs: 1, unsafePlacementCacheWait: true, ...options });
 const copyPendingIds = async (id: string) => (await pkg.migrationStatus(ext, id)).pending.map((m) => m.id);
 async function withCopyTenant(suffix: string, work: (id: string) => Promise<void>) {
   const id = `${prefix}-${suffix}`;

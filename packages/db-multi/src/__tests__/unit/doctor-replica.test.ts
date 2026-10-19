@@ -21,6 +21,7 @@ function run(replica: Replica = {}) {
     if (text.includes("pg_is_in_recovery")) return [{ in_recovery: replica.inRecovery ?? true, caught_up: false, lag_ms: replica.lagMs ?? 30 }];
     if (text.includes("set_config")) return [{}];
     if (text.includes("_migrations")) return (text.includes("_node_") ? nodeMigrations : platformMigrations).map(({ id, checksum }) => ({ id, checksum }));
+    if (text.includes("__moved_") || text.includes("platform.moves")) return [];
     if (text.includes("platform.nodes") || text.includes("node_identity")) return [{ database_id: onReplica ? (replica.identity ?? "db0") : "db0" }];
     if (text.includes("AS invalid")) return [{ invalid: 0, inactive: 0, moving: 0, recovery: 0 }];
     if (text.includes("standard_conforming_strings")) return [{ on: true }];
