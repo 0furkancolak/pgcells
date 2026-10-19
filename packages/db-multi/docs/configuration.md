@@ -29,6 +29,24 @@ const withReplicas = createConfig(["postgres://…/db0"], ["db0=postgres://…/r
 // → { nodes: [{ id: "db0", url: "…", replicas: [] }, { id: "db1", url: "…", replicas: [] }] }
 ```
 
+### URLs from code instead of the environment
+
+`DATABASE_URLS` is only the default source. `createDatabase(config, options)` and `createManagement(config, options)` accept any `Config`, and `createConfig` takes an array, so a secret manager, a vault client or Workers bindings need no extra option or environment variable. Resolve first, then build the config (both factories are synchronous, so do the `await` before them):
+
+```ts
+import { createConfig, createDatabase } from "@0furkancolak/pgcells";
+import { bunDriver } from "@0furkancolak/pgcells/drivers/bun";
+
+// Secret manager: one secret per node, keyed by the node id. Explicit ids make the pairing independent of list order.
+const secrets = await vault.getMany(["pg/db0", "pg/db1"]);                      // your client
+const config = createConfig(["db0", "db1"].map((id, i) => `${id}=${secrets[i]}`)); // → db0=…,db1=…
+const db = createDatabase(config, { driver: bunDriver });
+```
+
+Rotation: a `Database` keeps its pools for the life of the process. To pick up new credentials, build a new `Database` from a fresh config and `close()` the old one after its in-flight requests finish. The package does not poll a secret source itself.
+
+A single URL cannot reach several servers (a libpq URL names one endpoint; multi-host URLs are for failover, not routing). Several cells therefore mean several URLs here, or a pooler that maps database names to servers (PgBouncer `[databases]`); the tenant-to-database mapping stays in `platform.*` either way ([below](#direct-connection-and-pooler)).
+
 ## Direct connection and pooler
 
 The application and management connect to **the same databases, in the same order, with the same credentials**; the difference is the connection type.
