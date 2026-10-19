@@ -147,3 +147,53 @@ export function createDatabase(config: Config, options: RuntimeOptions): Databas
 export function createDatabase(configOrOptions: Config | RuntimeOptions, options?: RuntimeOptions): Database {
   return "nodes" in configOrOptions ? openDatabase(configOrOptions, options as RuntimeOptions) : openDatabase(loadConfig(), configOrOptions);
 }
+
+/** A `Database` whose pools can be replaced while the process keeps serving: `rotate()` is for new credentials or a changed node list. */
+export type RotatingDatabase = Database & {
+  /** Resolves the config again, opens a new `Database` and checks its `ready()`; only then does it replace the current one, which is closed gracefully
+   * (in-flight work gets the pool close timeout). If anything fails the current one stays in place and the error is thrown. Concurrent calls share one rotation.
+   * The placement cache starts empty. */
+  rotate(): Promise<void>;
+};
+
+/** `resolve` returns the `Config` (secret manager, vault, bindings); it is called once now and again on every `rotate()`. The returned object forwards every
+ * `Database` member to the current instance, so it can be passed to `dbMiddleware({ database })` and Better Auth like a plain `Database`.
+ * Nothing polls: call `rotate()` from your own schedule or signal handler. `ready()` is the caller's job for the first instance, as with `createDatabase`. */
+export async function createRotatingDatabase(resolve: () => Config | Promise<Config>, options: RuntimeOptions): Promise<RotatingDatabase> {
+  let current = createDatabase(await resolve(), options);
+  let closed = false;
+  let rotation: Promise<void> | undefined;
+
+  async function replace() {
+    const next = createDatabase(await resolve(), options);
+    try {
+      await next.ready();
+    } catch (error) {
+      await next.close().catch(() => {});
+      throw error;
+    }
+    if (closed) {
+      await next.close().catch(() => {});
+      throw new AppError("DATABASE_CLOSED", "Database clients are closed");
+    }
+    const previous = current;
+    current = next;
+    await previous.close().catch(() => {});
+  }
+  const own = {
+    rotate() {
+      if (closed) return Promise.reject(new AppError("DATABASE_CLOSED", "Database clients are closed"));
+      return (rotation ??= replace().finally(() => {
+        rotation = undefined;
+      }));
+    },
+    close() {
+      closed = true;
+      return current.close();
+    },
+  };
+  return new Proxy(own as unknown as RotatingDatabase, {
+    get: (target, key) => (key in target ? Reflect.get(target, key) : Reflect.get(current, key)),
+    has: (target, key) => key in target || key in current,
+  });
+}

@@ -43,7 +43,17 @@ const config = createConfig(["db0", "db1"].map((id, i) => `${id}=${secrets[i]}`)
 const db = createDatabase(config, { driver: bunDriver });
 ```
 
-Rotation: a `Database` keeps its pools for the life of the process. To pick up new credentials, build a new `Database` from a fresh config and `close()` the old one after its in-flight requests finish. The package does not poll a secret source itself.
+Rotation: a plain `Database` keeps its pools for the life of the process. `createRotatingDatabase` returns a `Database` you can re-point without a restart:
+
+```ts
+import { createRotatingDatabase } from "@0furkancolak/pgcells";
+
+const db = await createRotatingDatabase(async () => createConfig(await readUrlsFromVault()), { driver: bunDriver });
+await db.ready();
+process.on("SIGHUP", () => void db.rotate().catch((error) => log.error(error))); // or your own schedule / secret-change webhook
+```
+
+`rotate()` calls the resolver again, opens a new `Database`, runs its `ready()`, and only then swaps it in and closes the old one gracefully (in-flight work gets the pool close timeout). If the resolver or `ready()` fails, the current `Database` stays in place and the error is thrown (it never contains the URL). Concurrent calls share one rotation, and the placement cache starts empty after a swap. The returned object forwards every `Database` member, so `dbMiddleware({ database: db })` and Better Auth use it unchanged. Nothing polls a secret source; calling `rotate()` is your job.
 
 A single URL cannot reach several servers (a libpq URL names one endpoint; multi-host URLs are for failover, not routing). Several cells therefore mean several URLs here, or a pooler that maps database names to servers (PgBouncer `[databases]`); the tenant-to-database mapping stays in `platform.*` either way ([below](#direct-connection-and-pooler)).
 
