@@ -10,7 +10,7 @@
     },
     "packages/db-multi": {
       "name": "@0furkancolak/pgcells",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "bin": {
         "pgcells": "./src/core/cli.ts",
       },
@@ -47,7 +47,7 @@
     },
     "packages/db-single": {
       "name": "@0furkancolak/pgcells-single",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "bin": {
         "pgcells-single": "./src/core/cli.ts",
       },
@@ -101,7 +101,7 @@
     },
     "packages/redis": {
       "name": "@0furkancolak/pgcells-redis",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "bullmq": "5.81.5",
         "ioredis": "5.11.1",

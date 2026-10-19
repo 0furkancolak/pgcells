@@ -1,6 +1,6 @@
 {
   "name": "@0furkancolak/pgcells",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Region-aware multi-tenant PostgreSQL for TypeScript: tenants live in schemas inside cells, a small directory says where.",
   "license": "Apache-2.0",
   "keywords": [

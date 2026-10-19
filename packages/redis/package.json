@@ -1,6 +1,6 @@
 {
   "name": "@0furkancolak/pgcells-redis",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Redis helpers for pgcells: placement cache with cross-process invalidation, auth storage, cache and tenant-aware queues.",
   "license": "Apache-2.0",
   "keywords": [

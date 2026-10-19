@@ -1,6 +1,6 @@
 {
   "name": "@0furkancolak/pgcells-single",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Single-database PostgreSQL toolkit for TypeScript: compile-time SQL, transaction-pooler safe runtime, migrations, Better Auth adapter.",
   "license": "Apache-2.0",
   "keywords": [
