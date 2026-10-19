@@ -93,12 +93,19 @@ Numeric options must be integers between 1 and the upper limit; a value outside 
 | `maxLifetimeSeconds` | 300 | 3600 | Maximum lifetime of a connection |
 | `placementCacheMs` | 5000 | 25000 (`PLACEMENT_CACHE_MAX_MS`) | In-process placement cache (`active` records only) |
 | `staleIfErrorMs` | 0 (off) | 300000 | While the directory (`db0`) is unreachable (connection errors and `DATABASE_TIMEOUT` only), an expired `active` placement may be used for this much longer. Never used for `migrating`/`maintenance` records or after `invalidatePlacement`. See [Directory outages](#directory-outages) |
+| `tenantMaxInflight` | 0 (off) | 10000 | At most this many concurrent contexts (`withTenant`, `withTenantRead`, request scopes) per tenant in this process; a new one fails fast with `DATABASE_BUSY` so one noisy tenant cannot take all connections of its database. Off means nothing is counted per tenant |
 | `replicaMaxLagMs` | 5000 | 3600000 | Replica reads: a replica whose lag exceeds this is not used ([replicas.md](replicas.md)) |
 | `replicaStatusMs` | 5000 | 60000 | Cache duration of the replica status (health + lag) |
 | `replicaOnUnavailable` | `"primary"` | `"primary"` \| `"error"` | When no healthy replica exists, the read goes to the primary in a `READ ONLY` transaction, or `REPLICA_UNAVAILABLE` |
 | `onSpan` | none | | Measurement callback; see [telemetry.md](telemetry.md) for OpenTelemetry/Sentry |
 
 The fields of the returned object that you will use: `ready()`, `close()`, `withTenant(id, work)`, `withTenant.forPlacement(placement, work)`, `withTenantRead(id, work)`, `replicas()`, `withNode(databaseId, work)`, `withPlatform(work)`, `placement(id)`, `invalidatePlacement(id)`, `platform.get(id)`, `config`. Their use is covered in [queries.md](queries.md) and [tenants.md](tenants.md).
+
+### Closing, draining and counters
+
+- `await db.close()` closes the pools at once. `await db.close({ drain: true, timeoutMs })` first refuses new contexts (`DATABASE_CLOSED`; `db.ready()` fails immediately, so a load balancer stops sending traffic), waits up to `timeoutMs` (default 10000) for the contexts that already started to finish all their statements, then closes the pools. It returns `{ drained, remaining }`: `remaining` is the number of contexts still running when the wait ended (their statements are cut by the close). `dbMiddleware(...)` has a `shutdown()` for the shared database.
+- `db.stats()` returns plain counters without a tracing backend: `databases` (one entry per opened pool, `db0`, `db1`, replicas as `db0#1`: `inUse`, `waiting`, `maxPending`, `acquireP50Ms`/`acquireP99Ms` over the last 256 acquisitions, `expiredDiscarded`, `busyRejected`) and `contexts` (`active`, `tenantBusyRejected`, `draining`). `poolGauges(db, meter)` from `@0furkancolak/pgcells/telemetry` registers them as OpenTelemetry observable gauges. The driver pools do not expose idle counts uniformly, so there is no `idle`.
+- `failoverClass(error)` and `retryable(error)` (from `@0furkancolak/pgcells`) classify failover-type errors; nothing in the package retries ([connections guide](https://github.com/0furkancolak/pgcells/blob/main/docs/guides/connections.md#8-deploys-restarts-and-failover)).
 
 ### Directory outages
 

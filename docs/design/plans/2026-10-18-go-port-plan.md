@@ -1,3 +1,5 @@
+> **İptal edildi (sahip kararı, 2026-10-19): Go sürümü yapılmayacak.** Bu belge tarihsel kayıt olarak kalır.
+
 # Go sürümü planı
 
 Tarih: 2026-10-18 · Tasarım: [`2026-10-18-pgcells-oss-regions-design.md`](../specs/2026-10-18-pgcells-oss-regions-design.md) §8, D7, D22 · Ana yol: [roadmap](2026-10-18-roadmap-remaining.md) F7

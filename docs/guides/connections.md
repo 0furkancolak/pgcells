@@ -2,7 +2,7 @@
 
 In a multi-tenant system the database is almost never limited by CPU first. It is limited by **connections**: PostgreSQL forks a process per connection, so a few hundred busy connections cost more than a few thousand queries. This guide explains how pgcells uses connections, how to size every layer, how to run PgBouncer (or any transaction-mode pooler), and what happens when something fails.
 
-Status legend: ✅ shipped today · 🔜 planned (see [the plan](../design/plans/2026-10-18-connections-pgbouncer-plan.md)) · ⚠️ not verified against a real provider.
+Status legend: ✅ shipped today · 🔜 planned (see [the plan](../design/plans/2026-10-18-connections-pgbouncer-plan.md)) · ⚠️ not verified against a real provider. Numbers marked *measured* come from the fault-injection and version tests in `packages/db-multi/src/__tests__/integration` (local Docker, 2026-10-19).
 
 ## 1. The mental model: three layers
 
@@ -45,7 +45,7 @@ The design rule that follows: **the application never talks to PostgreSQL direct
 | No named prepared statements, no session state on the query path. Safe for transaction pooling on all four drivers. | drivers |
 | `ready()` detects a direct connection by asking two separately borrowed connections for `pg_backend_pid()`. | `tenants/pooler.ts` |
 | Management refuses a pooled URL (`DIRECT_CONNECTION_REQUIRED`). | `operations/locks.ts` |
-| `doctor` checks timeouts, identity, the PgBouncer global `pool_mode`. | `tools/doctor.ts` |
+| `doctor` checks timeouts, identity, the PgBouncer global `pool_mode`, timeout alignment and (given the deployment shape) the connection budget. | `tools/doctor.ts` |
 
 ## 3. Sizing: the connection budget
 
@@ -63,9 +63,17 @@ Notes:
 - **(2)** counts **every** pooler instance: two PgBouncer instances with `default_pool_size = 20` can open 40 server connections to the same database and user. Management is `perDatabaseConcurrency` (default 4) direct connections; add `migrationConcurrency`-driven bursts only while migrating.
 - **(3)** is the one people skip. Concurrency needed = arrival rate × latency. A cell serving 5,000 statements/s at 2 ms average needs about 10 busy server connections, not 500. A pool of 20 is plenty; a pool of 200 only adds context switching on PostgreSQL.
 
-**Worked example** (one cell, one region): 40 app instances, `poolMax = 5` → 200 client connections per database; two PgBouncer instances, `max_client_conn = 1000` each (limit 2,000, we use 200: 10 %, safe for deploy overlap). `default_pool_size = 20` → at most 40 server connections for the application user. The primary has `max_connections = 200`: 40 (app) + 4 (management) + 20 (maintenance, monitoring, replication slots) = 64, well below 190. Throughput ceiling by (3): 40 connections / 2 ms ≈ 20,000 statements/s per cell.
+**Worked example** (one cell, one region): 40 app instances, `poolMax = 5` → 200 client connections per database; two PgBouncer instances, `max_client_conn = 1000` each (limit 2,000 × 0.5 = 1,000; we use 200: safe for deploy overlap). `default_pool_size = 20` → at most 40 server connections for the application user. The primary has `max_connections = 200`: 40 (app) + 4 (management) + 20 (maintenance, monitoring, replication slots) = 64, well below the limit of 177 (`(200 − 3 reserved) × 0.9`). Throughput ceiling by (3): 40 connections / 2 ms ≈ 20,000 statements/s per cell; 5,000 statements/s at 2 ms needs 10 busy connections.
 
-🔜 `pgcells tools pooler plan --instances 40 --pool-max 5 --poolers 2 --rps 5000 --latency-ms 2` will print this arithmetic and fail when an inequality is violated; `doctor` gets a `connection_budget` check fed by the same inputs.
+✅ The same arithmetic is a command, and a unit test locks these exact numbers:
+
+```bash
+pgcells pooler plan --instances 40 --pool-max 5 --poolers 2 --default-pool-size 20 \
+  --max-client-conn 1000 --max-connections 200 --rps 5000 --latency-ms 2
+# {"ok":true,"clients":{"load":200,"limit":1000},"servers":{"load":64,"limit":177,...},"flow":{"needed":10,"available":40,"ceilingRps":20000},"violations":[]}
+```
+
+It needs no database and exits 1 on a violation. `doctor --pgbouncer-url --instances 40 --pool-max 5 --poolers 2` runs the same check per node against the pooler's real `max_client_conn`/`default_pool_size` and PostgreSQL's real `max_connections`. In code: `connectionBudget(input)` from `@0furkancolak/pgcells/tools`.
 
 **Pool size on the app side.** Keep `poolMax` small (the default 5 is right for most services): the pooler already multiplexes. Raise it only if `db.acquire` spans show waiting while the pooler's `cl_waiting` is zero. On Cloudflare Workers use `poolMax: 1` per request (sockets cannot outlive a request).
 
@@ -84,7 +92,7 @@ Notes:
 
 ## 5. A production starting point for PgBouncer
 
-The repository ships a development config (`max_client_conn = 200`, `default_pool_size = 10`). For production, start here and measure; values are starting points, not truths.
+The repository ships a development config (`max_client_conn = 200`, `default_pool_size = 10`). For production, start here and measure; values are starting points, not truths. ✅ `pgcells pooler generate` writes this file for your nodes (one alias per node in `DATABASE_URLS`, `dbN_ro1…` per replica in `DATABASE_REPLICA_URLS`), deterministically and without secrets; `--check dir` fails when a deployed `pgbouncer.ini` has drifted. A real PgBouncer loads its output in the integration suite.
 
 ```ini
 [databases]
@@ -93,45 +101,53 @@ The repository ships a development config (`max_client_conn = 200`, `default_poo
 db1 = host=pg1.eu.internal port=5432 dbname=app pool_size=20
 
 [pgbouncer]
-pool_mode = transaction              ; required by pgcells
+; Comments must sit on their own lines: PgBouncer does not strip trailing comments from a value.
+; pgcells requires transaction pooling.
+pool_mode = transaction
 listen_addr = 0.0.0.0
 listen_port = 6432
-so_reuseport = 1                     ; several pgbouncer processes on one host
+; Several pgbouncer processes on one host.
+so_reuseport = 1
 
-max_client_conn = 2000               ; budget (1)
-default_pool_size = 20               ; budget (2) and (3)
-min_pool_size = 5                    ; keep a few warm after idle periods
-reserve_pool_size = 5                ; burst allowance ...
-reserve_pool_timeout = 3             ; ... after 3 s of waiting
-max_db_connections = 40              ; hard cap per database across users
+; Budget (1).
+max_client_conn = 2000
+; Budget (2) and (3).
+default_pool_size = 20
+min_pool_size = 5
+reserve_pool_size = 5
+reserve_pool_timeout = 3
+; Hard cap per database across users.
+max_db_connections = 40
 
-; --- timeouts: align with the application (section 6) ---
-query_wait_timeout = 8               ; > app deadline (statementTimeoutMs + 1 s + 0.5 s)
+; Timeouts: align with the application (section 6). query_wait_timeout > app deadline (statementTimeoutMs + 1 s + 0.5 s).
+query_wait_timeout = 8
 server_connect_timeout = 5
 server_login_retry = 1
 client_login_timeout = 10
-idle_transaction_timeout = 15        ; defensive: PostgreSQL's idle_in_transaction_session_timeout is the real guard
+idle_transaction_timeout = 15
 server_idle_timeout = 60
-server_lifetime = 1800               ; recycle server connections; lets failover/credential changes propagate
+; Recycle server connections; lets failover and credential changes propagate.
+server_lifetime = 1800
 tcp_keepalive = 1
 
-; --- features pgcells does not use ---
-max_prepared_statements = 0          ; named prepared statements are not used (see section 7 for the planned opt-in)
+; Named prepared statements are not used (section 7).
+max_prepared_statements = 0
 
-; --- security ---
 auth_type = scram-sha-256
-auth_file = /etc/pgbouncer/userlist.txt   ; or auth_query for many users
+; Or auth_query for many users.
+auth_file = /etc/pgbouncer/userlist.txt
 client_tls_sslmode = require
 server_tls_sslmode = verify-full
 
-; --- operations ---
 admin_users = pgbouncer_admin
 stats_users = pgbouncer_stats
 ```
 
+With `scram-sha-256` the verifier in `userlist.txt` is also what PgBouncer uses to log in to the servers, so every backend must hold the same verifier for that user (`ALTER ROLE … PASSWORD '<SCRAM-SHA-256$…>'` accepts it), or give per-database credentials in `[databases]`.
+
 Operational commands you will need: `SHOW POOLS` (look at `cl_waiting` and `maxwait`; a persistently non-zero `cl_waiting` means the server pool is the bottleneck), `SHOW STATS`, `SHOW CONFIG`, `RECONNECT` (after `bootstrap` changes database defaults or after a failover), `PAUSE`/`RESUME` (planned maintenance), and a graceful shutdown/online restart so in-flight transactions finish.
 
-⚠️ Parameter names and defaults vary by PgBouncer version; validate against your version's documentation. The repository's CI exercises PgBouncer 1.24 only; a version matrix is planned.
+⚠️ Parameter names and defaults vary by PgBouncer version; validate against your version's documentation. CI runs the transaction-pooling checks against PgBouncer **1.21.0, 1.23.1 and 1.24.0**, each with `max_prepared_statements` 0 and 100, and found no behavioural difference ([providers.md](../../packages/db-multi/docs/providers.md#pgbouncer-versions)).
 
 ## 6. Timeouts must agree
 
@@ -139,10 +155,12 @@ Four clocks apply to one statement. Set them so the **application sees a determi
 
 | Clock | Where | Default | Rule |
 |---|---|---|---|
-| Acquire deadline | app (`statementTimeoutMs`) | 5000 ms | Max wait for a pooled connection; the job never starts when it expires (`DATABASE_TIMEOUT`) |
+| Acquire deadline | app (`statementTimeoutMs`) | 5000 ms | Max wait for a pooled connection; the job never starts when it expires (`DATABASE_TIMEOUT`, class `unreachable`, retryable) |
 | Answer deadline | app | `statementTimeoutMs + 1 s` | Statement cancelled, connection discarded, error after at most 0.5 s more |
 | `statement_timeout` | PostgreSQL database default, written by `bootstrap` | = `statementTimeoutMs` | **Must equal** the app value, on every cell |
-| `query_wait_timeout` | PgBouncer | 120 s (PgBouncer default) | Set **above** the answer deadline (e.g. 8 s for 5 s) so the app's `DATABASE_TIMEOUT` wins; otherwise clients see `08P01` resets |
+| `query_wait_timeout` | PgBouncer | 120 s (PgBouncer default) | Set **above** the answer deadline (e.g. 8 s for 5 s) so the app's `DATABASE_TIMEOUT` wins; otherwise clients see `08P01` resets. `doctor --pgbouncer-url` checks it (`timeout_alignment`) |
+
+*Measured:* with the application deadline at 2 s a statement that never gets an answer ends with `DATABASE_TIMEOUT` within 3.5 s (`statementTimeoutMs` + 1 s answer margin + 0.5 s cancel wait), through a stalled pooler-to-PostgreSQL leg as well as through added latency; after `RECONNECT` the database-level `statement_timeout` (5 s default) still ends a longer statement at about 5 s on the new server connections.
 
 The `client_connection_check_interval = 1000` database default makes PostgreSQL stop a running statement within a second after the client disappears, which is what makes "discard the connection" safe even for drivers that cannot cancel (Bun SQL, Neon).
 
@@ -154,7 +172,7 @@ The `client_connection_check_interval = 1000` database default makes PostgreSQL 
 | `LISTEN` / `NOTIFY` | Needs one stable session | Use a direct connection for listeners, or Redis pub/sub |
 | Session `SET` / `RESET` | Leaks to the next client | `SET LOCAL` inside a transaction |
 | Temporary tables, `WITH HOLD` cursors, `DECLARE` outside a transaction | Session scoped | Avoid; use transaction scope |
-| Named prepared statements | Server connection differs per transaction | Not used. PgBouncer ≥ 1.21 can track them with `max_prepared_statements > 0`; 🔜 an opt-in is under evaluation (it made postgres.js about 2× faster in a spike, at the cost of client-side cache growth: see [performance notes](../../packages/db-multi/docs/performance-and-observability.md)) |
+| Named prepared statements | Server connection differs per transaction | Not used, and **not planned** (decided 2026-10-19). PgBouncer ≥ 1.21 can track them with `max_prepared_statements > 0`, but the SQL text carries the tenant schema, so the statement count is queries × tenants: in a spike with 20,000 distinct statements postgres.js gained nothing and its client-side cache grew by about 27 MB per run ([measurements](../../packages/db-multi/docs/performance-and-observability.md#decision-named-prepared-statements-rejected)) |
 | `COPY` through the app path | Driver/pooler dependent | Use management (direct) for bulk operations |
 
 The package enforces what it can: the query compiler never emits session state, the runtime has no `LISTEN`, and management is direct-only.
@@ -163,25 +181,37 @@ The package enforces what it can: the query compiler never emits session state, 
 
 | Event | What the application sees | What to do |
 |---|---|---|
-| App rolling deploy | Old and new pools overlap | Budget (1) with the 0.5 factor. 🔜 `db.close({ drain: true })` stops accepting work and waits for in-flight statements; today call `close()` after your HTTP server stops |
-| PgBouncer restart | Requests fail until the pooler is back; e2e scenario 10 measures recovery ✅ | Run ≥ 2 poolers behind a load balancer; use online restart / `so_reuseport` handover |
+| App rolling deploy | Old and new pools overlap | Budget (1) with the 0.5 factor. ✅ `await db.close({ drain: true, timeoutMs })` refuses new work (`ready()` fails at once, so the load balancer drains), waits for the contexts that already started, then closes the pools; `dbMiddleware(...).shutdown()` does it for the shared database. *Measured:* with six request loops running, switching to a new generation and draining the old one failed no request |
+| PgBouncer restart | Requests fail until the pooler is back; e2e scenario 10 measures recovery ✅. *Measured* (pooler stopped behind a TCP proxy, `statementTimeoutMs` 2 s): each request fails after the acquire deadline (2.0 s) with `DATABASE_TIMEOUT` that classifies as `unreachable` and is retryable, because nothing was sent; the first request after the pooler is back succeeds within a second (141 and 877 ms in two runs) | Run ≥ 2 poolers behind a load balancer; use online restart / `so_reuseport` handover |
 | `bootstrap` changed timeouts | Existing server connections keep old values | `RECONNECT` on the pooler; `doctor` reports `runtime_timeouts` |
-| PostgreSQL primary failover (managed) | `DATABASE_UNAVAILABLE` (503) or `DATABASE_TIMEOUT` (504) for that cell for tens of seconds; other cells unaffected (e2e scenario 8 ✅) | Point the pooler at the cluster's stable endpoint/DNS; short `dns_max_ttl`; `RECONNECT` if the endpoint pins an IP |
+| PostgreSQL primary failover (managed) | `DATABASE_UNAVAILABLE` (503) or `DATABASE_TIMEOUT` (504) for that cell for tens of seconds; other cells unaffected (e2e scenario 8 ✅). *Measured* (pooler-to-PostgreSQL leg cut): the first request ends with `DATABASE_TIMEOUT` after `statementTimeoutMs` + 1.5 s (3.5 s at 2 s); PgBouncer then caches the failed login for `server_login_retry` and answers later requests at once with `08P01` (`pooler-reset`, retryable); the leg is usable again within a second of healing (255 ms in the run). A partition that stalls data without closing connections ends the same way, bounded by the same 3.5 s | Point the pooler at the cluster's stable endpoint/DNS; short `dns_max_ttl`; `RECONNECT` if the endpoint pins an IP |
 | PostgreSQL cell down | Only that cell's tenants fail; `ready()` fails, so the load balancer drains the instance | Health endpoint should call `ready()`, not the request path |
 | Hyperdrive / managed pooler | Provider-specific | ⚠️ not verified; use `pooler: "assumed"` after checking the provider docs |
 
-There are **no hidden retries**. After a failover the application gets an error and decides. 🔜 `retryable(error)` classifies errors (connection reset, `57P01`, `08006`, pooler `08P01`) so callers can retry **idempotent** work deliberately.
+There are **no hidden retries**. After a failover the application gets an error and decides. ✅ `failoverClass(error)` and `retryable(error)` (`@0furkancolak/pgcells`) classify errors so callers can retry **idempotent** work deliberately:
+
+| Class | Examples | `retryable` |
+|---|---|---|
+| `connection-reset` | `ECONNRESET`, closed connection, `08006`, `08003` | yes (the statement may or may not have run) |
+| `unreachable` | `ECONNREFUSED`, `ETIMEDOUT`, `ENOTFOUND`, `08001`, `DATABASE_TIMEOUT` before the statement was sent (no connection within the deadline) | yes |
+| `admin-shutdown` | `57P01`, `57P02`, `57P03` | yes |
+| `read-only` | `25006` (a write reached a demoted primary) | yes |
+| `pooler-reset` | `08P01` | yes |
+| `busy` | `DATABASE_BUSY`, `53300` | yes, after a backoff |
+| `timeout` | `DATABASE_TIMEOUT` while the statement was running, `57014` | **no**: it may have committed |
+
+Everything else (a constraint violation, a missing table, an unknown tenant) is not a failover error. `retryable` says a retry is *possible*; whether it is *safe* depends on your work being idempotent.
 
 ## 9. Fairness: one tenant must not starve the rest
 
-The pool is per database, so a noisy tenant can occupy all server connections of its cell. Today the protection is capacity planning (placement `size` and node `capacity`) and the 64-waiter bound. 🔜 A per-tenant in-flight limit (`tenantMaxInflight`, default off) will fail fast with `DATABASE_BUSY` for the offender while others proceed. Move a persistently noisy tenant to a dedicated cell ([tenant moves](regions.md#7-moving-tenants)).
+The pool is per database, so a noisy tenant can occupy all server connections of its cell. Today the protection is capacity planning (placement `size` and node `capacity`) and the 64-waiter bound. ✅ A per-tenant limit (`tenantMaxInflight`, default off) fails fast with `DATABASE_BUSY` for the offender while others proceed. It counts concurrent *contexts* (`withTenant`, `withTenantRead`, request scopes) per tenant in the process; with it off nothing is counted per tenant. *Measured* under a storm of 320 concurrent statements from 4 processes with `poolMax` 5 against a server pool of 5: each process shed load with `DATABASE_BUSY` beyond its 64 pending jobs, the pooler queued the rest (`cl_waiting` > 0), and every accepted statement completed. Move a persistently noisy tenant to a dedicated cell ([tenant moves](regions.md#7-moving-tenants)).
 
 ## 10. Monitoring checklist
 
 - Spans ✅: `db.acquire` (waiting for a connection), `db.query`, `db.transaction`, `placement.read` vs `placement.cache` ([telemetry](../../packages/db-multi/docs/telemetry.md)). A rising `db.acquire` with idle PostgreSQL means the pool or pooler is the bottleneck.
 - PgBouncer: `cl_waiting`, `maxwait`, `sv_active`, `sv_idle`, `avg_query_time`, `total_wait_time`.
 - PostgreSQL: `pg_stat_activity` grouped by `state` and `application_name`, `idle in transaction` count, `max_connections` utilisation.
-- 🔜 `db.stats()` will expose pool in-use/idle/pending and wait-time percentiles per database without a tracing backend.
+- ✅ `db.stats()` exposes pool in-use, waiting, acquisition-time percentiles, discarded connections and refused jobs per database without a tracing backend; `poolGauges(db, meter)` publishes them to OpenTelemetry ([telemetry](../../packages/db-multi/docs/telemetry.md)). Driver pools do not expose idle counts uniformly, so there is no `idle` figure; use PgBouncer's `sv_idle`.
 
 ## 11. Serverless and edge
 

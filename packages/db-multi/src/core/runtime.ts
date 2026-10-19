@@ -1,11 +1,11 @@
 /** Runtime factory: pools, placement reads (with a short in-process cache) and the tenant context. It does not load the management, parser, tools or driver
  * modules. */
-import { type Config, type DatabaseNode, type DatabaseOptions, loadConfig, PLATFORM_DATABASE_ID, replicaPolicy, runtimeSettings } from "./config";
-import { createPools, reportSpan, type SpanHandler, spanner } from "./database";
+import { boundedInteger, type Config, type DatabaseNode, type DatabaseOptions, loadConfig, PLATFORM_DATABASE_ID, replicaPolicy, runtimeSettings } from "./config";
+import { createPools, type PoolStats, reportSpan, type SpanHandler, spanner } from "./database";
 import type { Driver } from "./driver";
 import { AppError, databaseUnavailable, errorCode } from "./errors";
 import { PLATFORM_SCHEMA } from "./sql/query";
-import { createWithTenant, createWithTenantRead, runContext, type TenantContext } from "./tenants/context";
+import { type ContextLifecycle, createWithTenant, createWithTenantRead, runContext, type TenantContext } from "./tenants/context";
 import type { Placement } from "./tenants/model";
 import { checkDatabases } from "./tenants/nodes";
 import { createPlatform } from "./tenants/placement";
@@ -138,17 +138,19 @@ function openDatabase(input: Config, { driver, onSpan, pooler = "verified", repl
   /** Invalidates the placement in this process immediately (e.g. when an `onPlacementChange` broadcast is received); an in-flight read is not written to the cache either. */
   const invalidatePlacement = cache.invalidate;
 
-  const withTenant = createWithTenant(pools, { get: placement });
+  const lifecycle = createLifecycle(config.tenantMaxInflight);
+  const withTenant = createWithTenant(pools, { get: placement }, lifecycle);
   /** `src/queries/tenant/` read queries go to a replica; see `docs/replicas.md`. */
-  const withTenantRead = createWithTenantRead(pools, { get: placement }, replicaRouter, onUnavailable);
+  const withTenantRead = createWithTenantRead(pools, { get: placement }, replicaRouter, onUnavailable, lifecycle);
   /** Replica status (health, lag, availability); probes without consulting the cache. Contains no URL. */
   const replicas = () => replicaRouter.report(config.nodes.map((node) => node.id));
   /** `src/queries/platform/` queries: the platform database (db0, schema `platform`). */
-  const withPlatform = <T>(work: (db: TenantContext) => Promise<T>) => runContext(pools.platform, pools.platform, PLATFORM_SCHEMA, "platform", work);
+  const withPlatform = <T>(work: (db: TenantContext) => Promise<T>) =>
+    runContext(pools.platform, pools.platform, PLATFORM_SCHEMA, "platform", work, undefined, { lifecycle });
   /** `src/queries/node/` queries: the `platform` schema of the `databaseId` DB (the same pool as the tenants). */
   const withNode = <T>(databaseId: string, work: (db: TenantContext) => Promise<T>) => {
     const db = pools.node(databaseId);
-    return runContext(db, db, PLATFORM_SCHEMA, "node", work);
+    return runContext(db, db, PLATFORM_SCHEMA, "node", work, undefined, { lifecycle });
   };
   // One check per node: concurrent `ready()` calls wait for the same result; a successful result is kept and a failed one is removed.
   const poolerChecks = new Map<string, Promise<void>>();
@@ -176,11 +178,95 @@ function openDatabase(input: Config, { driver, onSpan, pooler = "verified", repl
    * transaction-mode pooler. Otherwise `DATABASE_NOT_CONFIGURED`, `DATABASE_NOT_REGISTERED`, `DATABASE_UNAVAILABLE`,
    * `DATABASE_ORDER_CHANGED`, `DATABASE_TIMEOUT` or `POOLER_REQUIRED`. Call it at startup and on the health endpoint (not on the request path). */
   const ready = async () => {
+    lifecycle.assertOpen();
     await checkDatabases(pools, config.nodes.map((node) => node.id));
     if (pooler === "verified") await Promise.all(config.nodes.map(checkPooler));
   };
-  return { config, pools, platform, placement, invalidatePlacement, withTenant, withTenantRead, replicas, withNode, withPlatform, ready, close: pools.close };
+  /** Counters without a tracing backend: one entry per opened pool (`db0`, `db1`, replicas as `db0#1`) and the context counts of this process. */
+  const stats = (): { databases: Record<string, PoolStats>; contexts: ContextStats } => ({ databases: pools.stats(), contexts: lifecycle.stats() });
+  /** `drain: true` first refuses new contexts (`DATABASE_CLOSED`, `ready()` fails) and waits up to `timeoutMs` (default 10 s) for the started ones; the pools are
+   * closed in any case. The result says how many contexts were still running when the wait ended. */
+  const close = async (options: CloseOptions = {}): Promise<CloseResult> => {
+    const remaining = options.drain ? await lifecycle.drain(options.timeoutMs ?? DRAIN_TIMEOUT_MS) : lifecycle.stats().active;
+    await pools.close();
+    return { drained: remaining === 0, remaining };
+  };
+  return { config, pools, platform, placement, invalidatePlacement, withTenant, withTenantRead, replicas, withNode, withPlatform, ready, stats, close };
 }
+
+export interface CloseOptions {
+  /** Refuse new work and wait for the started contexts before closing. */
+  drain?: boolean;
+  /** The longest the drain waits (default 10000, at most `DRAIN_TIMEOUT_MAX_MS`). */
+  timeoutMs?: number;
+}
+export interface CloseResult {
+  /** `false` if contexts were still running when the pools were closed. */
+  drained: boolean;
+  remaining: number;
+}
+export interface ContextStats {
+  /** Contexts running now. */
+  active: number;
+  /** Contexts refused by `tenantMaxInflight`. */
+  tenantBusyRejected: number;
+  draining: boolean;
+}
+const DRAIN_TIMEOUT_MS = 10_000;
+
+/** Counts started contexts, refuses new ones while draining and over the per-tenant limit. With the limit off nothing is kept per tenant. */
+function createLifecycle(tenantMaxInflight: number): ContextLifecycle & { drain(timeoutMs: number): Promise<number>; assertOpen(): void; stats(): ContextStats } {
+  let active = 0;
+  let tenantBusyRejected = 0;
+  let draining = false;
+  let idle: (() => void) | undefined;
+  const perTenant = tenantMaxInflight > 0 ? new Map<string, number>() : undefined;
+  const closed = () => new AppError("DATABASE_CLOSED", "Database clients are closed");
+  return {
+    enter(tenantId) {
+      if (draining) throw closed();
+      if (perTenant && tenantId !== undefined) {
+        const running = perTenant.get(tenantId) ?? 0;
+        if (running >= tenantMaxInflight) {
+          tenantBusyRejected++;
+          throw new AppError("DATABASE_BUSY", `Tenant ${tenantId} has too many requests in flight`);
+        }
+        perTenant.set(tenantId, running + 1);
+      }
+      active++;
+    },
+    leave(tenantId) {
+      active--;
+      if (perTenant && tenantId !== undefined) {
+        const running = (perTenant.get(tenantId) ?? 1) - 1;
+        if (running > 0) perTenant.set(tenantId, running);
+        else perTenant.delete(tenantId);
+      }
+      if (active === 0) idle?.();
+    },
+    assertOpen() {
+      if (draining) throw closed();
+    },
+    drain(timeoutMs) {
+      draining = true;
+      if (active === 0) return Promise.resolve(0);
+      return new Promise<number>((resolve) => {
+        const timer = setTimeout(() => {
+          idle = undefined;
+          resolve(active);
+        }, boundedInteger(timeoutMs, "timeoutMs", DRAIN_TIMEOUT_MAX_MS));
+        timer.unref?.();
+        idle = () => {
+          clearTimeout(timer);
+          idle = undefined;
+          resolve(0);
+        };
+      });
+    },
+    stats: () => ({ active, tenantBusyRejected, draining }),
+  };
+}
+const DRAIN_TIMEOUT_MAX_MS = 300_000;
 
 export type Database = ReturnType<typeof openDatabase>;
 
@@ -232,9 +318,9 @@ export async function createRotatingDatabase(resolve: () => Config | Promise<Con
         rotation = undefined;
       }));
     },
-    close() {
+    close(closeOptions?: CloseOptions) {
       closed = true;
-      return current.close();
+      return current.close(closeOptions);
     },
   };
   return new Proxy(own as unknown as RotatingDatabase, {

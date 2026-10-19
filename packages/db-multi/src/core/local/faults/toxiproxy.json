@@ -1,0 +1,5 @@
+[
+  {"name": "app-pooler", "listen": "[::]:5581", "upstream": "pgbouncer-faults:6432", "enabled": true},
+  {"name": "pooler-pg0", "listen": "[::]:15440", "upstream": "postgres-0:5432", "enabled": true},
+  {"name": "pooler-pg1", "listen": "[::]:15441", "upstream": "postgres-1:5432", "enabled": true}
+]

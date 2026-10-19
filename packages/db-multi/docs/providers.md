@@ -16,6 +16,18 @@ The basic rule ([configuration.md](configuration.md)): the **runtime** connects 
 | Supabase | dedicated PgBouncer `db.<ref>.supabase.co:6543` (paid plan) | runtime | documented, not verified |
 | Hyperdrive | Workers binding | runtime; the check can give a false negative, `pooler: "assumed"` is recommended | documented, not verified |
 
+## PgBouncer versions
+
+The transaction-pooling path (`ready()` probe, deadlines, tenant queries, transactions, the database-level `statement_timeout`) is exercised in CI against a matrix of PgBouncer releases, each with `max_prepared_statements` 0 and 100, using a `pgbouncer.ini` produced by `pooler generate`:
+
+| PgBouncer | Alpine | `max_prepared_statements` 0 | `max_prepared_statements` 100 |
+|---|---|---|---|
+| 1.21.0 | 3.19 | verified (2026-10-19, bun) | verified (2026-10-19, bun) |
+| 1.23.1 | 3.21 | verified (2026-10-19, bun) | verified (2026-10-19, bun) |
+| 1.24.0 | 3.22 | verified (2026-10-19, bun) | verified (2026-10-19, bun) |
+
+No behavioural difference between these versions showed up in these checks. Older releases, PgCat and PgDog are not tested. Managed poolers (Supavisor, Neon, RDS Proxy, Hyperdrive) stay `documented, not verified` until `verify:provider` has run against a real account.
+
 ## Verification
 
 ```bash

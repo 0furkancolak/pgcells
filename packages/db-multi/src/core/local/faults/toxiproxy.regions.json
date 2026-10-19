@@ -1,0 +1,5 @@
+[
+  {"name": "us-to-dir", "listen": "[::]:15450", "upstream": "pg-dir:5432", "enabled": true},
+  {"name": "us-to-eu", "listen": "[::]:15451", "upstream": "pg-eu:5432", "enabled": true},
+  {"name": "eu-to-us", "listen": "[::]:15452", "upstream": "pg-us:5432", "enabled": true}
+]

@@ -87,9 +87,12 @@ app.get("/ready", async (c) => {
 const server = Bun.serve({ port: 8080, idleTimeout: 30, fetch: app.fetch });
 process.once("SIGTERM", async () => {
   await server.stop();
-  await db.close();
+  // Refuses new database work (ready() fails), lets started requests finish, then closes the pools.
+  await db.close({ drain: true, timeoutMs: 10_000 });
 });
 ```
+
+`dbMiddleware(...)` returns a handler with a `shutdown(options?)` method that does the same for the shared database (`database` option or the one the middleware opened); it does nothing with `perRequest`.
 
 `db.ready()` is bounded even with a database that is down behind PgBouncer: the identity/record check takes `statementTimeoutMs + 1 s`, then (only until the first successful result) the pooler check runs with its own `statementTimeoutMs + 1 s` limit; with the defaults the worst case is about 14 s, which is above Bun's default `idleTimeout` (cache the `ready()` result in the health endpoint or raise `idleTimeout`). Bun's default `idleTimeout` is 10 s; give a longer `idleTimeout` so that PgBouncer's `query_wait_timeout` (default 10 s) error can be returned as a response.
 

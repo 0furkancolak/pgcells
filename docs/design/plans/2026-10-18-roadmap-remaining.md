@@ -4,25 +4,27 @@ Tarih: 2026-10-18 · Tasarım: [`2026-10-18-pgcells-oss-regions-design.md`](../s
 
 Bu belge bir **dizindir ve sıralamadır**. Her satırın ayrıntısı konu planındadır. Görev düzeyinde (test-önce adımlar, dosya yolları) uygulama planları, ilgili faz onaylandığında `superpowers:writing-plans` ile faz başına ayrı yazılır; burada yazılanlar kilometre taşı ve kabul ölçütü düzeyindedir. Durum: ☐ yapılmadı · ◐ kısmen · ✅ tamam.
 
-## 0. Bugünkü durumun dürüst dökümü
+## 0. Durumun dürüst dökümü
+
+İlk yazıldığı gün (2026-10-18) ve en son güncelleme (2026-10-19) birlikte. Durum: ☐ yapılmadı · ◐ kısmen · ✅ tamam.
 
 | Alan | Durum | Not |
 |---|---|---|
 | Çekirdek (runtime, placement, SQL derleyici, sürücüler, deadline) | ✅ | 4 sürücü, 3 kapsam, geniş test |
 | Yönetim (migration, provision, move, backup, restore, doctor) | ✅ | Hepsi tekrar çalıştırılabilir |
-| Replika okuması (C) | ✅ | Bölge-bilmeyen round-robin |
-| Neon/Supabase (B) | ◐ | Kod var; sağlayıcı satırlarının çoğu "documented, not verified" (17 işaret) |
+| Replika okuması (C) | ✅ | Bölge-bilmeyen round-robin (bölge yerelliği F4'te) |
+| Neon/Supabase (B) | ◐ | Kod var; sağlayıcı satırlarının çoğu "documented, not verified" (hesap gerekir) |
 | Gelişmiş SQL (E) | ✅ | |
 | `db-single` (G) | ✅ | |
-| Ölçek (D): kapasite modeli, backpressure ötesi, çok örnekte havuz | ☐ | Yol haritasında vardı, teslim edilmedi |
-| Kılavuz (F): baştan sona senaryo | ☐ | Bu işte `docs/guides/*` ile kısmen karşılanır |
-| Bölge modeli | ☐ | Bu işin merkezi |
-| Fencing, `db0` dayanıklılığı | ☐ | |
-| Bağlantı bütçesi/PgBouncer araçları | ◐ | Zorunluluk ve sınama var; bütçe, şablon, adillik, zarif kapanış yok |
-| Açık kaynak paketleme | ☐ | `private`, `@repo/*`, ham TS, LICENSE yok |
+| Açık kaynak paketleme (F1) | ✅ | Derlenmiş paketler, LICENSE, jamaster ayrımı, İngilizce, yayın hattı; sahip işleri (npm adı/yayın hesabı) kalır |
+| Fencing, `db0` dayanıklılığı (F2) | ✅ | 2026-10-19: kaynak schema yeniden adlandırma, bekleme invariantı, dizin replikası, stale-if-error |
+| Bağlantı bütçesi/PgBouncer araçları (F3) | ✅ | 2026-10-19: `pooler plan/generate`, `doctor` denetimleri, `stats()`, `close({drain})`, `tenantMaxInflight`, hata sınıflandırma, toxiproxy testleri, PgBouncer 1.21/1.23/1.24 matrisi. Karar: isimli prepared statement **uygulanmıyor** |
+| Bölge modeli (F4) | ☐ | Bu işin merkezi |
+| Ölçek (D): kapasite modeli | ☐ | |
+| Kılavuz (F): baştan sona senaryo | ☐ | |
+| Kesintisiz taşıma ve DR (F6) | ☐ | |
 | Plan kutuları | ◐ | 398 kutunun hiçbiri işaretli, çoğu iş yapılmış |
-| Kök README "paketler birbirine bağımlı değil" | ◐ | `redis` → `db-multi` bağımlılığı var; bu işte düzeltildi (README yeniden yazıldı) |
-| Go | ☐ | |
+| Go (F7) | — | **Yapılmayacak** (sahip kararı, 2026-10-19) |
 
 ## 1. Fazlar ve bağımlılıklar
 
@@ -36,8 +38,6 @@ F0 kararlar/hijyen ──► F1 yeniden adlandırma+paketleme ──► F2 fenci
                               F5 D+F+sağlayıcı doğrulama (paralel, F2'den sonra)
                                                           │
                                                 F6 kesintisiz taşıma + DR ──► v0.4
-                                                          │
-                                           F7 Go (v0.3 sonrası başlar) ──► go v0.1
                                                           ▼
                                                    v1.0 (soak)
 ```
@@ -84,8 +84,8 @@ Node `region`/`residency_zone`/etiket, `placements.residency_zone`, bölge süzg
 ### F6 — Kesintisiz taşıma ve DR → [bölgeler planı](2026-10-18-regions-plan.md) R10–R12 → **v0.4**
 Mantıksal replikasyon spike'ı (D17), `move --online`, sağlayıcı matrisi, DR promote runbook'u ve `doctor` denetimleri, nedensel okuma belirteci.
 
-### F7 — Go → [Go planı](2026-10-18-go-port-plan.md)
-`spec/` çıkarımı v0.3'te; Go çalışma zamanı, sonra yönetim, sonra CLI.
+### F7 — Go: yapılmayacak
+Sahip kararı (2026-10-19): Go sürümü kapsam dışıdır. [Go planı](2026-10-18-go-port-plan.md) tarihsel kayıt olarak kalır; `spec/` çıkarımı ve uyum fikstürleri de yapılmayacaktır.
 
 ### Sürekli
 Çeviri (F1 içinde başlar, bitene kadar sürer), CI matrisi büyümesi, sürüm notları, kılavuzların her özellikle birlikte güncellenmesi ("🔜" → "✅").
@@ -98,7 +98,6 @@ Mantıksal replikasyon spike'ı (D17), `move --online`, sağlayıcı matrisi, DR
 | **v0.2** | F3 bitti; toxiproxy testleri CI'da |
 | **v0.3** | F4 bitti; `spec/` dondu; iki bölgeli compose testleri CI'da |
 | **v0.4** | F6 bitti (veya desteklenmeyen matris satırlarıyla belgelenmiş) |
-| **go v0.1** | v0.3 sonrası; uyum fikstürlerinin tamamı geçer |
 | **v1.0** | v0.4 + jamaster üretim soak'u + API dondurma |
 
 ## 4. Riskler

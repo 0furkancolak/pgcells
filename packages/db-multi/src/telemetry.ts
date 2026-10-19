@@ -11,7 +11,8 @@
  * values — the query is always reported with placeholders such as `$1`, `$2`), it appears in the trace view as `db - select …`
  * and is listed nested under the HTTP request's span.
  */
-import type { Span, SpanHandler } from "./core/database";
+import type { PoolStats, Span, SpanHandler } from "./core/database";
+import type { ContextStats } from "./core/runtime";
 
 export type { Span, SpanHandler };
 
@@ -62,4 +63,39 @@ const sentryOp = (name: string) => (name === "db.query" ? "db" : name.startsWith
 export function sentry(client: SentryClient): SpanHandler {
   return (span) =>
     finish(client.startInactiveSpan({ name: sentryName(span), op: sentryOp(span.name), startTime: new Date(span.startTime), attributes: spanAttributes(span) }), span);
+}
+
+/** The smallest interface compatible with the `@opentelemetry/api` `Meter` that `poolGauges` needs. */
+export interface OpenTelemetryMeter {
+  createObservableGauge(
+    name: string,
+    options?: { description?: string; unit?: string },
+  ): { addCallback(callback: (result: { observe(value: number, attributes?: Attributes): void }) => void): void };
+}
+/** What `poolGauges` reads: a `Database` (or `RotatingDatabase`). */
+export interface StatsSource {
+  stats(): { databases: Record<string, PoolStats>; contexts: ContextStats };
+}
+
+/** Registers observable gauges for the pool counters of `db.stats()`; the OpenTelemetry SDK calls them on its own export interval, so the package starts no timer.
+ * Gauges per database (`db.namespace`): in use, waiting, p50/p99 acquisition time, discarded connections, refused jobs; per process: running contexts. */
+export function poolGauges(source: StatsSource, meter: OpenTelemetryMeter): void {
+  const perDatabase: [string, string, keyof PoolStats][] = [
+    ["pgcells.pool.in_use", "Connections reserved right now", "inUse"],
+    ["pgcells.pool.waiting", "Jobs waiting for a connection", "waiting"],
+    ["pgcells.pool.acquire_p50_ms", "Median time to obtain a connection over the last 256 acquisitions", "acquireP50Ms"],
+    ["pgcells.pool.acquire_p99_ms", "99th percentile time to obtain a connection over the last 256 acquisitions", "acquireP99Ms"],
+    ["pgcells.pool.expired_discarded", "Connections discarded after a deadline expired (cumulative)", "expiredDiscarded"],
+    ["pgcells.pool.busy_rejected", "Jobs refused with DATABASE_BUSY (cumulative)", "busyRejected"],
+  ];
+  for (const [name, description, key] of perDatabase)
+    meter.createObservableGauge(name, { description }).addCallback((result) => {
+      for (const [id, stats] of Object.entries(source.stats().databases)) {
+        const value = stats[key];
+        if (value !== null) result.observe(value, { "db.namespace": id });
+      }
+    });
+  meter.createObservableGauge("pgcells.contexts.active", { description: "Tenant, node and platform contexts running in this process" }).addCallback((result) => {
+    result.observe(source.stats().contexts.active);
+  });
 }

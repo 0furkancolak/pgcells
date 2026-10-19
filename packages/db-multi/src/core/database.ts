@@ -7,7 +7,7 @@
  * statement that expires is cancelled (if the driver supports it), the answer is awaited briefly, and the connection never returns to the pool (see `deadlineSession`). */
 import { type Config, type DatabaseNode, PLATFORM_DATABASE_ID } from "./config";
 import { type Connection, type Driver, type Pool, type PoolOptions, type Reserved, runInTransaction } from "./driver";
-import { AppError, errorCode } from "./errors";
+import { AppError, DeadlineError, errorCode } from "./errors";
 
 export interface Timeouts {
   statementTimeoutMs: number;
@@ -19,10 +19,27 @@ export interface TransactionOptions extends Partial<Timeouts> {
   /** Only marks the tenant in the `onSpan` span; not sent to the driver. */
   tenantId?: string;
 }
+/** Pool counters of one database client (`db.stats()`); plain numbers, no tracing backend needed. */
+export interface PoolStats {
+  /** Connections reserved right now by statements or transactions. */
+  inUse: number;
+  /** Jobs accepted but still waiting for a connection. */
+  waiting: number;
+  /** The limit on accepted jobs (`DATABASE_BUSY` beyond it). */
+  maxPending: number;
+  /** Time to obtain a connection over the last 256 acquisitions (ms); `null` before the first one. */
+  acquireP50Ms: number | null;
+  acquireP99Ms: number | null;
+  /** Connections thrown away because a statement outlived its deadline. */
+  expiredDiscarded: number;
+  /** Jobs refused with `DATABASE_BUSY` since the client was opened. */
+  busyRejected: number;
+}
 export interface Database extends Connection {
   transaction<T>(work: (tx: Connection) => Promise<T>, options?: TransactionOptions): Promise<T>;
   /** The raw pool with no deadline or wait limit: for special jobs such as `pg_cancel_backend` and `CREATE DATABASE`. */
   readonly pool: Pool;
+  stats(): PoolStats;
   close(): Promise<void>;
 }
 /** Measurement point: `db.acquire` (waiting for a connection), `db.query`, `db.transaction` (BEGIN…COMMIT), `placement.read`/`placement.cache`,
@@ -58,9 +75,12 @@ const ANSWER_MARGIN_MS = 1000;
 /** The longest the answer (a result or 57014) is awaited after an expired statement has been cancelled. */
 const CANCEL_WAIT_MS = 500;
 const POOL_CLOSE_TIMEOUT_MS = 5000;
+/** Connection-acquisition times kept for the percentiles of `stats()`. */
+const ACQUIRE_SAMPLES = 256;
 const CONNECT_TIMEOUT_SECONDS = 10;
 
-export const deadlineExceeded = () => new AppError("DATABASE_TIMEOUT", "Database query deadline exceeded");
+/** `workStarted`: whether the statement had been sent when the deadline expired (default yes: the safe assumption for callers deciding on a retry). */
+export const deadlineExceeded = (workStarted = true) => new DeadlineError(workStarted);
 
 /** The server's statement timeout (57014) becomes `DATABASE_TIMEOUT`; other errors stay as they are. */
 const mapServerTimeout = (error: unknown) => (errorCode(error) === QUERY_CANCELED ? deadlineExceeded() : error);
@@ -154,6 +174,10 @@ type Deadlines = ReturnType<typeof createDeadlines>;
  */
 class DeadlineSession {
   private expired = false;
+  /** Whether a deadline expired on this connection (it is then discarded on release). */
+  get wasExpired() {
+    return this.expired;
+  }
   constructor(
     readonly reserved: Reserved,
     private readonly deadlines: Deadlines,
@@ -161,7 +185,7 @@ class DeadlineSession {
 
   /** A statement whose answer deadline is `ms` (`undefined`: server timeout only). */
   bounded<T>(ms: number | undefined, answer: () => Promise<T>): Promise<T> {
-    if (this.expired) return Promise.reject(deadlineExceeded());
+    if (this.expired) return Promise.reject(deadlineExceeded(false));
     const pending = answer();
     if (ms === undefined) return pending;
     return new Promise<T>((resolve, reject) => {
@@ -205,7 +229,7 @@ function acquireWithin(pool: Pool, ms: number, deadlines: Deadlines): Promise<Re
     let late = false;
     const entry = deadlines.watch(ms, () => {
       late = true;
-      reject(deadlineExceeded());
+      reject(deadlineExceeded(false));
     });
     pool.reserve().then(
       (connection) => {
@@ -234,6 +258,26 @@ function beginSql(options: TransactionOptions, timeouts: Timeouts | undefined) {
 
 export function connect(pool: Pool, { deadlineMs, maxPending, timeouts, databaseId, onSpan }: DatabaseSettings): Database {
   let pending = 0;
+  // Counters for `stats()`: a few integer operations per statement, no allocation.
+  let inUse = 0;
+  let busyRejected = 0;
+  let expiredDiscarded = 0;
+  let sampled = 0;
+  const samples = new Float64Array(ACQUIRE_SAMPLES);
+  const sample = (ms: number) => void (samples[sampled++ % ACQUIRE_SAMPLES] = ms);
+  const percentile = (sorted: Float64Array, fraction: number) => sorted[Math.min(sorted.length - 1, Math.floor(fraction * sorted.length))] ?? null;
+  function stats(): PoolStats {
+    const sorted = samples.slice(0, Math.min(sampled, ACQUIRE_SAMPLES)).sort();
+    return {
+      inUse,
+      waiting: Math.max(0, pending - inUse),
+      maxPending,
+      acquireP50Ms: sorted.length ? percentile(sorted, 0.5) : null,
+      acquireP99Ms: sorted.length ? percentile(sorted, 0.99) : null,
+      expiredDiscarded,
+      busyRejected,
+    };
+  }
   const timed = spanner(onSpan, { databaseId });
   // If PgBouncer is left without a server (DB down), the answer does not arrive until `query_wait_timeout`; the server timeout has no effect.
   const deadlines = createDeadlines();
@@ -242,13 +286,22 @@ export function connect(pool: Pool, { deadlineMs, maxPending, timeouts, database
 
   /** Work on a reserved connection; `DATABASE_BUSY` if the pending-work limit is reached. */
   async function withReserved<T>(acquireMs: number, work: (session: DeadlineSession) => Promise<T>, tenantId?: string): Promise<T> {
-    if (pending >= maxPending) throw new AppError("DATABASE_BUSY", "Database client is saturated");
+    if (pending >= maxPending) {
+      busyRejected++;
+      throw new AppError("DATABASE_BUSY", "Database client is saturated");
+    }
     pending++;
     try {
-      const session = new DeadlineSession(await (onSpan ? timed("db.acquire", () => acquire(acquireMs), { tenantId }) : acquire(acquireMs)), deadlines);
+      const acquireStart = performance.now();
+      const reserved = await (onSpan ? timed("db.acquire", () => acquire(acquireMs), { tenantId }) : acquire(acquireMs));
+      sample(performance.now() - acquireStart);
+      inUse++;
+      const session = new DeadlineSession(reserved, deadlines);
       try {
         return await work(session);
       } finally {
+        inUse--;
+        if (session.wasExpired) expiredDiscarded++;
         session.release();
       }
     } catch (error) {
@@ -276,9 +329,12 @@ export function connect(pool: Pool, { deadlineMs, maxPending, timeouts, database
    * extended to the answer deadline. Behavior is the same as `withReserved` + `DeadlineSession`: if acquisition expires, the statement never goes through and a late
    * connection is released unused; if the answer time expires, the statement is cancelled, an answer arriving within `CANCEL_WAIT_MS` is returned, and the connection is discarded. */
   function single<T>(statement: (connection: Reserved) => Promise<T>, detail?: string, tenantId?: string): Promise<T> {
-    if (pending >= maxPending) return Promise.reject(new AppError("DATABASE_BUSY", "Database client is saturated"));
+    if (pending >= maxPending) {
+      busyRejected++;
+      return Promise.reject(new AppError("DATABASE_BUSY", "Database client is saturated"));
+    }
     pending++;
-    const acquireStart = onSpan ? performance.now() : 0;
+    const acquireStart = performance.now();
     const acquireTime = onSpan ? Date.now() : 0;
     let queryStart = 0;
     let queryTime = 0;
@@ -306,13 +362,17 @@ export function connect(pool: Pool, { deadlineMs, maxPending, timeouts, database
           if (reserved) span("db.query", queryTime, queryStart, outcome, failed, detail);
           else span("db.acquire", acquireTime, acquireStart, outcome, failed);
         }
-        reserved?.release(expired);
+        if (reserved) {
+          inUse--;
+          if (expired) expiredDiscarded++;
+          reserved.release(expired);
+        }
         pending--;
         if (failed) reject(mapServerTimeout(outcome));
         else resolve(outcome as T);
       };
       const entry = deadlines.watch(deadlineMs, () => {
-        if (!reserved) return settle(true, deadlineExceeded());
+        if (!reserved) return settle(true, deadlineExceeded(false));
         expired = true;
         reserved.cancel?.();
         wait = setTimeout(() => settle(true, deadlineExceeded()), CANCEL_WAIT_MS);
@@ -321,6 +381,8 @@ export function connect(pool: Pool, { deadlineMs, maxPending, timeouts, database
         (connection) => {
           if (settled) return connection.release();
           reserved = connection;
+          inUse++;
+          sample(performance.now() - acquireStart);
           if (onSpan) {
             span("db.acquire", acquireTime, acquireStart, undefined, false);
             queryStart = performance.now();
@@ -356,6 +418,7 @@ export function connect(pool: Pool, { deadlineMs, maxPending, timeouts, database
     transaction,
     query: query as Database["query"],
     exec,
+    stats,
     close: () => {
       deadlines.close();
       return pool.close(POOL_CLOSE_TIMEOUT_MS);
@@ -408,6 +471,14 @@ export function createPools(config: PoolConfig, driver: Driver, max: number, set
     return list;
   }
 
+  /** Counters of every pool opened so far: `db0`, `db1`, … and `db0#1` for a node's first replica. */
+  function stats(): Record<string, PoolStats> {
+    const result: Record<string, PoolStats> = {};
+    for (const [id, db] of databases) result[id] = db.stats();
+    for (const [id, list] of replicaDatabases) for (const [index, db] of list.entries()) result[`${id}#${index + 1}`] = db.stats();
+    return result;
+  }
+
   async function close() {
     if (closed) return;
     closed = true;
@@ -418,5 +489,5 @@ export function createPools(config: PoolConfig, driver: Driver, max: number, set
     if (failed?.status === "rejected") throw failed.reason;
   }
 
-  return { platform: node(PLATFORM_DATABASE_ID), node, replicas, nodeConfig, close };
+  return { platform: node(PLATFORM_DATABASE_ID), node, replicas, nodeConfig, stats, close };
 }

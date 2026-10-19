@@ -44,6 +44,21 @@ services:
       - './src/core/local/replica/replica-entrypoint.sh:/replica-entrypoint.sh:ro'
     depends_on: {postgres-rp: {condition: service_healthy}}
     healthcheck: {test: ['CMD-SHELL', 'pg_isready -U admin -d app'], interval: 2s, timeout: 2s, retries: 30}
+  # Fault-injection tests only (toxiproxy: latency, partitions, resets). app-pooler 5581 -> pgbouncer-faults; the pooler reaches PostgreSQL through
+  # pooler-pg0/pooler-pg1, so each leg can be broken separately. The toxiproxy API is on 8474.
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.12.0
+    command: ['-host=0.0.0.0', '-config=/toxiproxy.json']
+    ports: ['127.0.0.1:8474:8474', '127.0.0.1:5581:5581']
+    volumes: ['./src/core/local/faults/toxiproxy.json:/toxiproxy.json:ro']
+    depends_on: {postgres-0: {condition: service_healthy}, postgres-1: {condition: service_healthy}}
+  pgbouncer-faults:
+    build: ./src/core/local/pgbouncer
+    volumes:
+      - './src/core/local/faults/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro'
+      - './src/core/local/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro'
+    depends_on: [toxiproxy]
+    healthcheck: {test: ['CMD-SHELL', 'nc -z 127.0.0.1 6432'], interval: 2s, timeout: 2s, retries: 30}
 volumes:
   postgres0:
   postgres1:

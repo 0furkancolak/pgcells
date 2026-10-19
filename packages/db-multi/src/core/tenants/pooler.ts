@@ -21,7 +21,7 @@ export async function usesTransactionPooler(
   const pool = driver(url, { max: 2, idleTimeoutSeconds: 1, maxLifetimeSeconds: 0, connectTimeoutSeconds: 10 });
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(deadlineExceeded()), deadlineMs);
+    timer = setTimeout(() => reject(deadlineExceeded(false)), deadlineMs);
   });
   const probe = async () => {
     for (let round = 0; round < rounds; round++) {

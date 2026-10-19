@@ -4,6 +4,7 @@ export { type Config, createConfig, type DatabaseOptions, loadConfig, PLACEMENT_
 export type { Span, SpanHandler } from "./core/database";
 export type { Driver } from "./core/driver";
 export { AppError, databaseUnavailable, errorCode } from "./core/errors";
+export { type FailoverClass, failoverClass, retryable } from "./core/failover";
 export { createDatabase, createRotatingDatabase, type Database, type RotatingDatabase, type RuntimeOptions } from "./core/runtime";
 export type { PreparedQuery } from "./core/sql/query";
 export type { ReadContext, TenantContext } from "./core/tenants/context";

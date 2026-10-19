@@ -13,7 +13,7 @@ import { type Config, type DatabaseOptions, loadConfig } from "./core/config";
 import type { Driver } from "./core/driver";
 import type { SpanHandler } from "./core/database";
 import { AppError } from "./core/errors";
-import { createDatabase, type Database } from "./core/runtime";
+import { type CloseOptions, type CloseResult, createDatabase, type Database } from "./core/runtime";
 import type { ReadContext, ReadSession, TenantContext } from "./core/tenants/context";
 import { type Placement, tenantFromHost } from "./core/tenants/model";
 
@@ -115,7 +115,7 @@ export function dbMiddleware<C extends MiddlewareContext>(middlewareOptions: DbM
     return createDatabase(resolved, { ...options, driver: driver as Driver, ...(perRequest && { poolMax: 1 }) });
   };
 
-  return async (c: C, next: () => Promise<void>) => {
+  const handler = async (c: C, next: () => Promise<void>) => {
     const db = perRequest ? openDatabase(c) : (shared ??= openDatabase(c));
     c.set(
       "db",
@@ -127,4 +127,8 @@ export function dbMiddleware<C extends MiddlewareContext>(middlewareOptions: DbM
       if (perRequest) await db.close().catch(() => {});
     }
   };
+  /** Graceful shutdown for the shared database: refuses new requests' database work, waits for the started ones, closes the pools. Call it from your SIGTERM handler
+   * after the load balancer stopped sending traffic. Does nothing with `perRequest` (each request closes its own pool). */
+  const shutdown = async (closeOptions: CloseOptions = {}): Promise<CloseResult> => (shared ? shared.close({ drain: true, ...closeOptions }) : { drained: true, remaining: 0 });
+  return Object.assign(handler, { shutdown });
 }

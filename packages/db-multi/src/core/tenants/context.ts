@@ -19,6 +19,13 @@ export type ReadContext = Pick<TenantContext, "query">;
 export interface ContextMode {
   readOnly?: boolean;
   onWrite?: () => void;
+  /** Counts the context in and out (drain, per-tenant limit); `enter` may refuse the context. */
+  lifecycle?: ContextLifecycle;
+}
+/** `enter` runs before a context starts and throws to refuse it (`DATABASE_CLOSED` while draining, `DATABASE_BUSY` over the tenant limit); `leave` runs once when it ends. */
+export interface ContextLifecycle {
+  enter(tenantId?: string): void;
+  leave(tenantId?: string): void;
 }
 
 /** The read session of a request scope: reads within the scope are pinned to the replica chosen by the first read (monotonic reads across calls);
@@ -28,7 +35,11 @@ export interface ReadSession {
 }
 
 /** A single immutable context per request; the transaction is optional, tenant routing state never is. */
-export function createWithTenant(pools: Pick<Pools, "node">, placements: { get(id: string): Placement | Promise<Placement> }) {
+export function createWithTenant(
+  pools: Pick<Pools, "node">,
+  placements: { get(id: string): Placement | Promise<Placement> },
+  lifecycle?: ContextLifecycle,
+) {
   function forPlacement<T>(placement: Placement, work: (db: TenantContext) => Promise<T>, onWrite?: () => void): Promise<T> {
     let db: Database;
     try {
@@ -38,7 +49,7 @@ export function createWithTenant(pools: Pick<Pools, "node">, placements: { get(i
     } catch (error) {
       return Promise.reject(error);
     }
-    return runContext(db, db, placement.schemaName, "tenant", work, placement.tenantId, { onWrite });
+    return runContext(db, db, placement.schemaName, "tenant", work, placement.tenantId, { onWrite, lifecycle });
   }
   // A cached placement arrives synchronously: no extra `await` turn is added.
   const withTenant = <T>(id: string, work: (db: TenantContext) => Promise<T>, onWrite?: () => void): Promise<T> => {
@@ -65,6 +76,7 @@ export async function runContext<T>(
   mode: ContextMode = {},
 ) {
   const insideTransaction = !transactionDatabase && !mode.readOnly;
+  mode.lifecycle?.enter(tenantId);
   let isOpen = true;
   let failure: { error: unknown } | undefined;
   // Unfinished queries; created on the first query. The reaction runs when the query settles, before the caller's continuation, so an awaited query does not remain in the set.
@@ -114,8 +126,12 @@ export async function runContext<T>(
     result = await work(context);
   } finally {
     isOpen = false;
-    // The transaction cannot be committed/rolled back while un-awaited queries are still running.
-    if (running?.size) await Promise.allSettled(running);
+    try {
+      // The transaction cannot be committed/rolled back while un-awaited queries are still running.
+      if (running?.size) await Promise.allSettled(running);
+    } finally {
+      mode.lifecycle?.leave(tenantId);
+    }
   }
   if (failure) throw failure.error;
   return result;
@@ -150,6 +166,7 @@ export function createWithTenantRead(
   placements: { get(id: string): Placement | Promise<Placement> },
   router: Pick<ReplicaRouter, "pick">,
   onUnavailable: ReplicaPolicy,
+  lifecycle?: ContextLifecycle,
 ) {
   async function forPlacement<T>(placement: Placement, work: (db: ReadContext) => Promise<T>, afterWrite = false, session?: ReadSession): Promise<T> {
     requireActive(placement);
@@ -170,7 +187,7 @@ export function createWithTenantRead(
     if (handle) connection = replicaReads(handle);
     else if (afterWrite || onUnavailable === "primary") connection = primaryReads(primary);
     else throw new AppError("REPLICA_UNAVAILABLE", `No usable replica for database ${placement.databaseId}`);
-    return runContext(connection, undefined, placement.schemaName, "tenant", work, placement.tenantId, { readOnly: true });
+    return runContext(connection, undefined, placement.schemaName, "tenant", work, placement.tenantId, { readOnly: true, lifecycle });
   }
   const withTenantRead = async <T>(id: string, work: (db: ReadContext) => Promise<T>): Promise<T> => forPlacement(await placements.get(id), work);
   return Object.assign(withTenantRead, { forPlacement });

@@ -45,6 +45,16 @@ The event given to `onSpan` (the `Span` type, `@0furkancolak/pgcells`):
 | `repo_db.duration_ms` | Duration (ms) |
 | `error.type` | The error code, if the work failed |
 
+**Pool gauges (OpenTelemetry).** `poolGauges(db, meter)` registers observable gauges that read `db.stats()` when the SDK collects (no timer of ours): `pgcells.pool.in_use`, `waiting`, `acquire_p50_ms`, `acquire_p99_ms`, `expired_discarded`, `busy_rejected` (attribute `db.namespace`) and `pgcells.contexts.active`.
+
+```ts
+import { metrics } from "@opentelemetry/api";
+import { poolGauges } from "@0furkancolak/pgcells/telemetry";
+poolGauges(db, metrics.getMeter("app"));
+```
+
+For another metrics system, poll `db.stats()` from your own schedule. Sentry has no adapter for these counters.
+
 In Sentry the `op` is: names starting with `db.` as they are (`db.query`), the others `db.<first segment>` (`tenant.lock` → `db.tenant`, `move.copying` → `db.move`, `placement.read` → `db.placement`).
 
 ## Span names

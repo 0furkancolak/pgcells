@@ -1,0 +1,25 @@
+# Two "regions" for the region-model tests (own project name: it does not touch the default stack). db0 (directory) and db1 live in eu-west, db2 in us-east.
+# A cross-region path goes through toxiproxy, where a latency toxic stands in for the ocean; the app of a region reaches its own region directly.
+#   docker compose -p pgcells-regions -f compose.regions.yaml up -d --wait
+# Ports: 5591 db0 (eu-west), 5592 db1 (eu-west), 5593 db2 (us-east); toxiproxy API 8475; proxies 15450 (us -> db0), 15451 (us -> db1), 15452 (eu -> db2).
+name: pgcells-regions
+x-postgres: &postgres
+  image: postgres:16.15-alpine
+  environment: {POSTGRES_DB: app, POSTGRES_USER: admin, POSTGRES_PASSWORD: local_admin_password}
+  healthcheck: {test: ['CMD-SHELL', 'pg_isready -U admin -d app'], interval: 2s, timeout: 2s, retries: 30}
+services:
+  pg-dir:
+    <<: *postgres
+    ports: ['127.0.0.1:5591:5432']
+  pg-eu:
+    <<: *postgres
+    ports: ['127.0.0.1:5592:5432']
+  pg-us:
+    <<: *postgres
+    ports: ['127.0.0.1:5593:5432']
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.12.0
+    command: ['-host=0.0.0.0', '-config=/toxiproxy.json']
+    ports: ['127.0.0.1:8475:8474', '127.0.0.1:15450:15450', '127.0.0.1:15451:15451', '127.0.0.1:15452:15452']
+    volumes: ['./src/core/local/faults/toxiproxy.regions.json:/toxiproxy.json:ro']
+    depends_on: {pg-dir: {condition: service_healthy}, pg-eu: {condition: service_healthy}, pg-us: {condition: service_healthy}}

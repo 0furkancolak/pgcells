@@ -6,7 +6,7 @@ import { openSession } from "../../core/operations/locks";
 import { createDatabase } from "../../index";
 import { drivers, failure, integration, pooledConfig } from "./helpers";
 
-const opened: { close(): Promise<void> }[] = [];
+const opened: { close(): Promise<unknown> }[] = [];
 afterAll(() => Promise.all(opened.map((db) => db.close())));
 
 const VALUES = `SELECT 9007199254740993::int8 AS i8, 1.25::numeric AS n, 5::int4 AS i4, 1.5::float8 AS f,

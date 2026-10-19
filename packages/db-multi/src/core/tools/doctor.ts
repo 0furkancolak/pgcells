@@ -9,6 +9,7 @@ import { pendingPlatformMigrations, type PlatformScope } from "../operations/boo
 import { openSession } from "../operations/locks";
 import { usesTransactionPooler } from "../tenants/pooler";
 import { probeReplica } from "../tenants/replicas";
+import { connectionBudget, type ConnectionBudgetInput } from "./pooler-plan";
 
 /** Cannot be proven with SQL; reported to the operator as unverified. */
 const externalChecks = [
@@ -18,6 +19,8 @@ const externalChecks = [
   ["deployment", "In the target environment, verify /ready, TLS/network access and that the application's DATABASE_URLS order is the same as management's."],
 ].map(([check, detail]) => ({ check, status: "unverified", detail }));
 
+/** The deployment shape that only the operator knows (`doctor --instances 40 --pool-max 5 --poolers 2`); the sizes come from the pooler and PostgreSQL. */
+export type BudgetShape = Pick<ConnectionBudgetInput, "appInstances" | "poolMax" | "poolers" | "replicasPerNode" | "distinctDbUsers" | "rps" | "latencyMs">;
 type Add = (check: string, ok: boolean, detail: string) => void;
 type Check = { target: string; check: string; ok: boolean; detail: string };
 
@@ -181,7 +184,15 @@ async function inspectReplica(m: Management, node: DatabaseNode, url: string, ad
   }
 }
 
-async function inspectPgBouncer(adminUrl: string, consoleDriver: Driver | undefined, add: Add) {
+/** PgBouncer's `query_wait_timeout` default (seconds) when the console does not list it. */
+const PGBOUNCER_QUERY_WAIT_DEFAULT_S = 120;
+/** Slack above `statementTimeoutMs` that the answer deadline adds (1 s) plus the margin before the client sees the error (0.5 s). */
+const ANSWER_DEADLINE_SLACK_MS = 1500;
+
+type PgBouncerSettings = ReadonlyMap<string, string | null>;
+
+/** Reads the pooler console once; returns its settings so that other checks (timeouts, connection budget) reuse them. */
+async function inspectPgBouncer(m: Management, adminUrl: string, consoleDriver: Driver | undefined, add: Add): Promise<PgBouncerSettings> {
   const url = URL.parse(adminUrl);
   if (!url || !["postgres:", "postgresql:"].includes(url.protocol) || url.pathname !== "/pgbouncer" || url.search)
     throw new AppError("INVALID_CONFIG", "PgBouncer admin URL must be postgres://…/pgbouncer");
@@ -189,18 +200,53 @@ async function inspectPgBouncer(adminUrl: string, consoleDriver: Driver | undefi
   const driver = consoleDriver ?? (await import("../drivers/bun")).bunDriver;
   const adminConsole = driver(url.href, { max: 1, idleTimeoutSeconds: 5, maxLifetimeSeconds: 30, connectTimeoutSeconds: 10 });
   try {
-    const settings = await adminConsole.query<{ key: string; value: string | null }>("SHOW CONFIG");
-    const mode = settings.find((row) => row.key === "pool_mode")?.value;
+    const rows = await adminConsole.query<{ key: string; value: string | null }>("SHOW CONFIG");
+    const settings = new Map(rows.map((row) => [row.key, row.value]));
     const detail = "Global pool_mode must be transaction. DB/user overrides must be checked separately via SHOW POOLS.";
-    add("global_pool_mode", mode === "transaction", detail);
+    add("global_pool_mode", settings.get("pool_mode") === "transaction", detail);
+    // 0 disables the wait limit: the application's own deadline then always comes first.
+    const wait = Number(settings.get("query_wait_timeout") ?? PGBOUNCER_QUERY_WAIT_DEFAULT_S);
+    const minimum = m.config.statementTimeoutMs + ANSWER_DEADLINE_SLACK_MS;
+    add(
+      "timeout_alignment",
+      wait === 0 || wait * 1000 > minimum,
+      `PgBouncer query_wait_timeout (${wait} s) must exceed the application's answer deadline (statementTimeoutMs ${m.config.statementTimeoutMs} ms + 1.5 s), otherwise clients see pooler resets (08P01) instead of DATABASE_TIMEOUT. The database's statement_timeout is checked by runtime_timeouts.`,
+    );
+    return settings;
   } finally {
     await adminConsole.close(1000);
   }
 }
 
+/** Connection budget of one node from the pooler's own settings and PostgreSQL's `max_connections`; the deployment shape comes from the operator. */
+async function inspectBudget(m: Management, node: DatabaseNode, settings: PgBouncerSettings, shape: BudgetShape, add: Add) {
+  const [server] = await m.pools.node(node.id).query<{ max_connections: number; reserved: number }>(
+    "SELECT pg_catalog.current_setting('max_connections')::integer AS max_connections, pg_catalog.current_setting('superuser_reserved_connections')::integer AS reserved",
+  );
+  const number = (key: string) => Number(settings.get(key));
+  if (!server || !Number.isInteger(number("max_client_conn")) || !Number.isInteger(number("default_pool_size")))
+    throw new AppError("INVALID_DATABASE_STATE", "PgBouncer or PostgreSQL did not report the sizes needed for the budget");
+  const plan = connectionBudget({
+    ...shape,
+    replicasPerNode: shape.replicasPerNode ?? node.replicas.length,
+    maxClientConn: number("max_client_conn"),
+    defaultPoolSize: number("default_pool_size"),
+    maxConnections: server.max_connections,
+    superuserReserved: server.reserved,
+    managementConcurrency: m.config.perDatabaseConcurrency,
+  });
+  add(
+    "connection_budget",
+    plan.ok,
+    plan.ok
+      ? `Within budget: ${plan.clients.load}/${plan.clients.limit} client connections, ${plan.servers.load}/${plan.servers.limit} server connections${plan.flow ? `, ${plan.flow.needed}/${plan.flow.available} concurrent statements` : ""}. Uses the pooler's global default_pool_size; per-database pool_size overrides are not read.`
+      : plan.violations.join("; "),
+  );
+}
+
 /** `consoleDriver`: PgBouncer admin console client; defaults to Bun SQL (the tools run on Bun and the console rejects postgres.js's
  * startup type queries). */
-export async function doctor(m: Management, options: { pgbouncerUrl?: string; pooledUrls?: string; consoleDriver?: Driver } = {}) {
+export async function doctor(m: Management, options: { pgbouncerUrl?: string; pooledUrls?: string; consoleDriver?: Driver; budget?: BudgetShape } = {}) {
   const pooled = options.pooledUrls === undefined ? undefined : runtimeUrls(m, options.pooledUrls);
   const checks: Check[] = [];
   /** Checks a single target; since driver errors can contain credentials, an error becomes a check with its details hidden. */
@@ -221,8 +267,16 @@ export async function doctor(m: Management, options: { pgbouncerUrl?: string; po
     for (const [replicaIndex, replicaUrl] of node.replicas.entries())
       await inspect(`${node.id}#${replicaIndex + 1}`, (add) => inspectReplica(m, node, replicaUrl, add));
   }
-  const { pgbouncerUrl, consoleDriver } = options;
-  if (pgbouncerUrl !== undefined) await inspect("pgbouncer", (add) => inspectPgBouncer(pgbouncerUrl, consoleDriver, add));
+  const { pgbouncerUrl, consoleDriver, budget } = options;
+  if (budget && pgbouncerUrl === undefined) throw new AppError("USAGE", "The connection budget reads the pooler's sizes: pass --pgbouncer-url as well");
+  if (pgbouncerUrl !== undefined) {
+    let settings: PgBouncerSettings | undefined;
+    await inspect("pgbouncer", async (add) => {
+      settings = await inspectPgBouncer(m, pgbouncerUrl, consoleDriver, add);
+    });
+    const known = settings;
+    if (budget && known) for (const node of m.config.nodes) await inspect(node.id, (add) => inspectBudget(m, node, known, budget, add));
+  }
 
   return {
     ok: checks.every((c) => c.ok),

@@ -61,7 +61,12 @@ export type DatabaseOptions = Partial<Values<typeof RUNTIME_LIMITS>> & {
    * Default 0 = off. Safe because a move renames the source schema at cutover, so a process that routes by an outdated record gets `undefined_table`
    * instead of writing to a copy nobody reads; `migrating` and `maintenance` records are never cached, so they are never served stale. */
   staleIfErrorMs?: number;
+  /** At most this many concurrent contexts (`withTenant`, `withTenantRead`, request scopes) per tenant in this process; beyond it a new one fails fast
+   * with `DATABASE_BUSY`, so one noisy tenant cannot take all connections of its database. Default 0 = off (no counting at all). */
+  tenantMaxInflight?: number;
 };
+/** Upper limit of `tenantMaxInflight`. */
+export const TENANT_MAX_INFLIGHT_MAX = 10_000;
 export type ManagementOptions = Partial<Values<typeof MANAGEMENT_LIMITS>> & {
   /** Lets `placementCacheWaitMs` be shorter than the placement caches can live. Only for throwaway environments (tests, local demos): a process whose cache
    * still shows the old database could otherwise write to a tenant that was already moved or reset. */
@@ -147,11 +152,13 @@ function settings<T extends Limits>(limits: T, config: Config, options: Partial<
   for (const [key, [fallback, max]] of Object.entries(limits)) values[key] = boundedInteger(options[key] ?? fallback, key, max);
   return values as Config & Values<T>;
 }
+/** Optional limits where 0 (or absent) means "off". */
+const offOrBounded = (value: number | undefined, name: string, max: number) => (value === undefined || value === 0 ? 0 : boundedInteger(value, name, max));
 export function runtimeSettings(config: Config, options: DatabaseOptions = {}) {
-  const staleIfErrorMs = options.staleIfErrorMs ?? 0;
   return {
     ...settings(RUNTIME_LIMITS, config, options),
-    staleIfErrorMs: staleIfErrorMs === 0 ? 0 : boundedInteger(staleIfErrorMs, "staleIfErrorMs", STALE_IF_ERROR_MAX_MS),
+    staleIfErrorMs: offOrBounded(options.staleIfErrorMs, "staleIfErrorMs", STALE_IF_ERROR_MAX_MS),
+    tenantMaxInflight: offOrBounded(options.tenantMaxInflight, "tenantMaxInflight", TENANT_MAX_INFLIGHT_MAX),
   };
 }
 /** Management settings. `placementCacheWaitMs` must outlast every placement cache: the longest cache (`PLACEMENT_CACHE_MAX_MS`), plus `replicaMaxLagMs` when `db0`

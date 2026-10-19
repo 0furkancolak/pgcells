@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 /** `pgcells` (in this repository `bun run cli` and `bun run tools`; the same entry point): validates the arguments, calls the management and tool functions, prints JSON; exit code 1 on an error
  * or incomplete work. The DB modules and the selected driver are loaded lazily; `local` commands (those that generate files) do not connect to the DB. */
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { boundedInteger, DATABASE_ID, MIGRATION_MAX } from "./config";
+import { boundedInteger, DATABASE_ID, loadConfig, MIGRATION_MAX } from "./config";
 import type { Driver } from "./driver";
 import { AppError, errorCode } from "./errors";
 import type * as ManagementApi from "../management";
@@ -45,6 +45,21 @@ export type CliOptions = MigrationRunOptions & {
   at?: string;
   safetyPoint?: string;
   org?: string;
+  check?: string;
+  appInstances?: number;
+  poolMax?: number;
+  poolers?: number;
+  defaultPoolSize?: number;
+  maxClientConn?: number;
+  maxConnections?: number;
+  replicasPerNode?: number;
+  distinctDbUsers?: number;
+  managementConcurrency?: number;
+  maintenanceConnections?: number;
+  superuserReserved?: number;
+  rps?: number;
+  latencyMs?: number;
+  statementTimeoutMs?: number;
 };
 /** Options that take no value; `--from-url`, `--pgbouncer-url` and `--pooled-urls` only mean "ask for the URL with hidden input". */
 type Switches = {
@@ -56,6 +71,7 @@ type Switches = {
   pooledUrls?: boolean;
   full?: boolean;
   fromReplica?: boolean;
+  noTls?: boolean;
 };
 type Options = CliOptions & Switches;
 interface Command {
@@ -73,7 +89,7 @@ interface Command {
 const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
 const usage = (message: string) => new AppError("USAGE", message);
 const MIGRATION_FLAGS = ["--dry-run", "--db", "--concurrency", "--per-db-concurrency", "--continue-on-error"];
-const BOOLEAN_FLAGS = ["--dry-run", "--demo", "--ts", "--continue-on-error", "--writers-drained", "--from-url", "--pgbouncer-url", "--pooled-urls", "--full", "--from-replica"];
+const BOOLEAN_FLAGS = ["--dry-run", "--demo", "--ts", "--continue-on-error", "--writers-drained", "--from-url", "--pgbouncer-url", "--pooled-urls", "--full", "--from-replica", "--no-tls"];
 /** URLs that carry a password are not put in argv (readable via `ps`); they are asked for with hidden input: [ask-secret.ts](tools/ask-secret.ts). */
 const SOURCE_URL_QUESTION = "Source DB URL (postgres://…, input is hidden): ";
 const PGBOUNCER_URL_QUESTION = "PgBouncer console URL (postgres://…/pgbouncer, input is hidden): ";
@@ -127,9 +143,31 @@ const INTEGER_FLAGS: Record<string, number> = {
   "--capacity": 1_000_000,
   "--keep": 1000,
   "--batch-size": 10000,
+  "--instances": 1_000_000,
+  "--pool-max": 100,
+  "--poolers": 1000,
+  "--default-pool-size": 10_000,
+  "--max-client-conn": 1_000_000,
+  "--max-connections": 100_000,
+  "--replicas": 8,
+  "--db-users": 100,
+  "--management": 1000,
+  "--maintenance": 10_000,
+  "--superuser-reserved": 1000,
+  "--rps": 100_000_000,
+  "--latency-ms": 600_000,
+  "--statement-timeout-ms": 300_000,
 };
 /** Options whose key differs from their camelCase equivalent. */
-const FLAG_KEYS: Record<string, string> = { "--per-db-concurrency": "perDatabaseConcurrency", "--db": "databaseIds" };
+const FLAG_KEYS: Record<string, string> = {
+  "--per-db-concurrency": "perDatabaseConcurrency",
+  "--db": "databaseIds",
+  "--instances": "appInstances",
+  "--replicas": "replicasPerNode",
+  "--db-users": "distinctDbUsers",
+  "--management": "managementConcurrency",
+  "--maintenance": "maintenanceConnections",
+};
 const HELP_FLAGS = ["--help", "-h"];
 const DRIVER_FLAG = "--driver=";
 const commaList = (value: string) => value.split(",").map((id) => id.trim()).filter(Boolean);
@@ -494,15 +532,91 @@ const commands: Record<string, Command> = {
       return pullSchema(app, schema, { databaseId: options.databaseIds?.[0], scope: options.scope, name: options.name, exclude: options.exclude });
     },
   },
-  doctor: {
-    usage: "[--pgbouncer-url] [--pooled-urls]",
+  "pooler plan": {
+    usage: "--instances N --pool-max N --poolers N --default-pool-size N --max-client-conn N --max-connections N",
     summary:
-      "Checks the connection, DB identity, timeouts and platform state read-only (--pgbouncer-url: asks for the console URL, --pooled-urls: asks for the runtime URLs, with hidden input)",
-    flags: ["--pgbouncer-url", "--pooled-urls"],
+      "Connection budget of one cell: client connections, server connections and statement flow against the pooler and PostgreSQL limits (no DB needed; exit code 1 on a violation). Optional: --replicas N --db-users N --management N --maintenance N --superuser-reserved N --rps N --latency-ms N",
+    flags: [
+      "--instances", "--pool-max", "--poolers", "--default-pool-size", "--max-client-conn", "--max-connections",
+      "--replicas", "--db-users", "--management", "--maintenance", "--superuser-reserved", "--rps", "--latency-ms",
+    ],
+    local: async (options) => {
+      const missing = (["appInstances", "poolMax", "poolers", "defaultPoolSize", "maxClientConn", "maxConnections"] as const).filter((key) => options[key] === undefined);
+      if (missing.length) throw usage(`pooler plan needs ${missing.join(", ")} (flags: --instances, --pool-max, --poolers, --default-pool-size, --max-client-conn, --max-connections)`);
+      const { connectionBudget } = await import("./tools/pooler-plan");
+      const plan = connectionBudget({
+        appInstances: options.appInstances as number,
+        poolMax: options.poolMax as number,
+        poolers: options.poolers as number,
+        defaultPoolSize: options.defaultPoolSize as number,
+        maxClientConn: options.maxClientConn as number,
+        maxConnections: options.maxConnections as number,
+        replicasPerNode: options.replicasPerNode,
+        distinctDbUsers: options.distinctDbUsers,
+        managementConcurrency: options.managementConcurrency,
+        maintenanceConnections: options.maintenanceConnections,
+        superuserReserved: options.superuserReserved,
+        rps: options.rps,
+        latencyMs: options.latencyMs,
+      });
+      if (!plan.ok) process.exitCode = 1;
+      return plan;
+    },
+  },
+  "pooler generate": {
+    usage: "[--poolers N] [--default-pool-size N] [--max-client-conn N] [--statement-timeout-ms N] [--no-tls] [--out dir | --check dir]",
+    summary:
+      "PgBouncer pgbouncer.ini and a userlist.txt skeleton for the nodes in DATABASE_URLS/DATABASE_REPLICA_URLS (no DB needed, no secrets in the output). Without --out the files are printed; --out writes them (never replacing a different file); --check compares an existing pgbouncer.ini and exits 1 on a difference",
+    flags: ["--poolers", "--default-pool-size", "--max-client-conn", "--statement-timeout-ms", "--out", "--check", "--no-tls"],
+    local: async (options) => {
+      if (options.out && options.check) throw usage("Pass either --out or --check");
+      const { generatePoolerFiles } = await import("./tools/pooler-generate");
+      const files = generatePoolerFiles({ nodes: loadConfig().nodes, ...options, tls: !options.noTls });
+      if (options.check) {
+        const actual = await readFile(`${options.check}/pgbouncer.ini`, "utf8").catch(() => {
+          throw usage(`${options.check}/pgbouncer.ini cannot be read`);
+        });
+        const { compareLines } = await import("./tools/pooler-generate");
+        const differences = compareLines(files["pgbouncer.ini"], actual);
+        if (differences.length) process.exitCode = 1;
+        return { ok: differences.length === 0, file: `${options.check}/pgbouncer.ini`, differences };
+      }
+      if (!options.out) return { files };
+      const written: string[] = [];
+      for (const [name, text] of Object.entries(files)) {
+        const target = `${options.out}/${name}`;
+        const existing = await readFile(target, "utf8").catch(() => undefined);
+        if (existing === text) continue;
+        await writeNewFile(target, text);
+        written.push(target);
+      }
+      return { written };
+    },
+  },
+  doctor: {
+    usage: "[--pgbouncer-url] [--pooled-urls] [--instances N --pool-max N --poolers N]",
+    summary:
+      "Checks the connection, DB identity, timeouts and platform state read-only (--pgbouncer-url: asks for the console URL, --pooled-urls: asks for the runtime URLs, with hidden input; with --pgbouncer-url, --instances/--pool-max/--poolers also check the connection budget against the pooler's and PostgreSQL's real limits, optionally --replicas N --db-users N --rps N --latency-ms N)",
+    flags: ["--pgbouncer-url", "--pooled-urls", "--instances", "--pool-max", "--poolers", "--replicas", "--db-users", "--rps", "--latency-ms"],
     run: async ({ app, options }) => {
+      const shape = (["appInstances", "poolMax", "poolers"] as const).map((key) => options[key]);
+      const wantsBudget = [...shape, options.replicasPerNode, options.distinctDbUsers, options.rps, options.latencyMs].some((value) => value !== undefined);
+      if (wantsBudget && shape.some((value) => value === undefined)) throw usage("The connection budget needs --instances, --pool-max and --poolers together");
+      if (wantsBudget && !options.pgbouncerUrl) throw usage("The connection budget reads the pooler's sizes: pass --pgbouncer-url as well");
       const pgbouncerUrl = options.pgbouncerUrl ? await askUrl(PGBOUNCER_URL_QUESTION, "PgBouncer admin URL") : undefined;
       const pooledUrls = options.pooledUrls ? await askUrls(POOLED_URLS_QUESTION, "Runtime URL") : undefined;
-      const result = await (await import("./tools/doctor")).doctor(app, { pgbouncerUrl, pooledUrls });
+      const budget = wantsBudget
+        ? {
+            appInstances: options.appInstances as number,
+            poolMax: options.poolMax as number,
+            poolers: options.poolers as number,
+            replicasPerNode: options.replicasPerNode,
+            distinctDbUsers: options.distinctDbUsers,
+            rps: options.rps,
+            latencyMs: options.latencyMs,
+          }
+        : undefined;
+      const result = await (await import("./tools/doctor")).doctor(app, { pgbouncerUrl, pooledUrls, budget });
       if (!result.ok) process.exitCode = 1;
       return result;
     },

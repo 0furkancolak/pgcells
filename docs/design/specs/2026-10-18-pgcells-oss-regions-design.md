@@ -29,7 +29,7 @@ Hedef kitle **değil**: tek tablo takımlı klasik uygulama (bunun için `db-sin
 - G4. Kontrol düzlemi (`db0`) tek hata noktası olmaktan çıkar: stale-if-error (fencing sonrası), bölgesel dizin replikası.
 - G5. Açık kaynak: ad, lisans, İngilizce belge, yayınlanabilir (derlenmiş) paketler, CI/yayın hattı, katkı ve güvenlik süreçleri.
 - G6. Mimarinin çizimli, doğru ve güncel anlatımı (README + kılavuzlar).
-- G7. Go sürümü için sözleşme (şema, kilit anahtarları, hata kodları, uyum testleri) TS'den çıkarılır; Go çalışma zamanı bunun üstüne kurulur.
+- ~~G7. Go sürümü için sözleşme (şema, kilit anahtarları, hata kodları, uyum testleri) TS'den çıkarılır; Go çalışma zamanı bunun üstüne kurulur.~~ **Yapılmayacak** (sahip kararı, 2026-10-19).
 
 **Hedef-dışı**
 - Aynı tenant için aktif-aktif çok bölgeli yazma (tek yazıcı ilkesi bilerek korunur).
@@ -53,7 +53,7 @@ Hedef kitle **değil**: tek tablo takımlı klasik uygulama (bunun için `db-sin
 | D4 | **Paketler:** `@pgcells/multi` (şimdiki `db-multi`), `@pgcells/single` (`db-single`), `@pgcells/redis`. Auth bu sürümde alt yol olarak kalır (`@pgcells/multi/auth`) | Önceki "kopyala ve devam et" kararı geçerli; ayrılma en erken v0.5'te yeniden değerlendirilir | benim kararım (önceki sahip kararına uyar) |
 | D5 | **Yayın biçimi:** derlenmiş ESM + `.d.ts`; migration/sorgu/seed SQL'i codegen ile TS dizgesine gömülür (`with { type: "text" }` yayına girmez). Çalışma ortamları: Bun ≥ 1.3.14, Node ≥ 22, Cloudflare Workers | Bugünkü ham TS ve Bun'a özgü SQL import'u Node/Workers tüketicilerini dışarıda bırakır | benim kararım |
 | D6 | **Sürümleme:** Changesets, semver; `0.x` bölge ve bağlantı özellikleri bitene kadar, `1.0` bir üretim soak'undan (jamaster) sonra. npm provenance (GitHub OIDC) | | benim kararım |
-| D7 | **Go:** aynı repoda `go/` + paylaşılan `spec/` sözleşmesi; Go işi TS `0.3` ile sözleşme dondurulunca başlar; çalışma zamanı önce, yönetim sonra | Karışık filo (TS + Go) aynı `platform.*` tablolarını ve kilit anahtarlarını kullanmak zorunda | benim kararım |
+| D7 | **Go: yapılmayacak** (sahip kararı, 2026-10-19). İlk karar: aynı repoda `go/` + paylaşılan `spec/` sözleşmesi, Go işi `0.3` sözleşme dondurmasından sonra | Kapsam dışı | **iptal** |
 | D8 | **Bölge modeli:** hücre = node; `platform.nodes.region` + `labels jsonb`; `placements.home_region` node'dan türer; bölgeler arası taşıma `--allow-cross-region` ve açık bir ikamet politikası ister | Tek yazıcı + yerel okuma; ikamet ihlali varsayılan olarak imkânsız | benim kararım |
 | D9 | **Fencing önce, kesintisiz taşıma sonra.** Cutover'da kaynak schema fiziksel olarak kilitlenir (yeniden adlandırma veya yetki geri alma) | En ucuz, en yüksek değerli güvence | benim kararım |
 | D10 | **Dizin (`platform.*`) asgari veri tutar:** `tenant_id`, `region`, `database_id`, durum. Kişisel veri (ör. `owner_email`) tenant'ın kendi hücresine taşınır; dizin tenant sütunları uygulama alanı olarak kalabilir ama belge ve `doctor` ikamet uyarısı verir | İkamet: dizin tek bölgede olabilir, tenant verisi olmamalı | benim kararım |
@@ -75,7 +75,7 @@ Belgeyi planlamadan önce bağımsız bir yazılım mühendisi okudu; sorduğu s
 | D19 | Çalışma ortamı çıtası (v0.1) | Kütüphane çalışma zamanı: Bun, Node 22, Workers (`pg`/`postgres.js` sürücüsü); Workers için derleme + duman testi (Hyperdrive "doğrulanmadı" kalır). **Düzeltme (2026-10-18, F1 planı sırasında bulundu):** CLI, codegen, `fetch-dump` ve Bun sürücüsü Bun API'lerini (`Bun.file/write/spawn`, `Glob`, `bun:SQL`) kullanır; bu yüzden v0.1'de yönetim girişi, araçlar, CLI ve codegen **Bun ister** (belgede ve `engines`'te açık); Node'da çalışan CLI v0.2 işidir. Entegrasyon/e2e paketleri Bun'da tam, Node'da yalnızca duman; Workers'ta yalnızca duman. |
 | D20 | Test çıtası (anti-hedef 4) | F3: compose'a toxiproxy (gecikme, bölünme, bağlantı sıfırlama) eklenir. F4: iki "bölge"li compose (toxiproxy ile bölgeler arası gecikme). Gerçek bölge gecikmesi ve yönetilen sağlayıcı yük devri "doğrulanmadı" etiketiyle kalır; etiket yeterlidir, ama etiketsiz iddia yoktur. |
 | D21 | Yönlendirme sözleşmesi | Kütüphane `onWrongRegion` kancası + `regionGuard` ara katmanını (421 veya 307, seçenekle) sağlar; yönlendirici/vekil sağlamaz (kenar/DNS işi). `createDatabase({ region })` verilmezse tek-bölge kipi: denetim kapalı, davranış değişmez (geriye uyumlu, `db-single` etkilenmez). Node'larda bölge tanımlı ama uygulama `region` vermemişse `doctor` uyarır, hata değil. |
-| D22 | Go bu planda | Kilometre taşı düzeyinde planlanır (§8, Go planı). Uyum fikstürlerinin sahibi `spec/`'tir ve TS'den üretilir; `v0.3` dondurmasını "sözleşme dosyaları ve fikstürler mevcut" ölçütüyle bağlar, Go uygulamasına bağlı değildir. |
+| D22 | Go bu planda | **İptal** (D7). `spec/` çıkarımı ve uyum fikstürleri de yapılmayacaktır | iptal |
 
 ## 5. Bölge-farkında mimari (özet)
 
@@ -104,13 +104,13 @@ Ayrıntı: [`2026-10-18-oss-packaging-plan.md`](../plans/2026-10-18-oss-packagin
 
 Yeniden adlandırma (`multi-tenant-example` → `pgcells`, `@repo/*` → `@pgcells/*`), LICENSE/NOTICE, jamaster ayrımı (D12), derleme hattı (D5), İngilizce çeviri (D3), `docs/design` → `docs/design`, tarih ve gizli bilgi denetimi (ön denetim: `.env` geçmişte hiç commit edilmemiş, gizli bilgi desenleri yok), CI'ya `npm pack` + temiz proje kurulum testi (Bun, Node, Workers), Changesets yayın hattı, SECURITY/CONTRIBUTING/CODE_OF_CONDUCT/şablonlar, README (çizimli).
 
-## 8. Go sürümü (özet)
+## 8. Go sürümü: yapılmayacak
 
-Ayrıntı: [`2026-10-18-go-port-plan.md`](../plans/2026-10-18-go-port-plan.md). Sözleşme (`spec/`): platform/node SQL şeması, advisory lock anahtar adları (`tenant-placement`, `migration-runner`, `tenant-operation:<id>`, `tenant-management:<id>`, `platform-bootstrap`), hata kodu tablosu, placement durum makinesi, uyum (conformance) fikstürleri. Go çalışma zamanı: `pgx/v5` (PgBouncer için `QueryExecModeExec`), `context` deadline'ları (Go'da gerçek sunucu iptali var), `net/http`/chi ara katmanı, OpenTelemetry. SQL derleyici: kendi Go üreteci (`pg_query_go`, yalnızca derleme zamanı), TS ile aynı davranış uyum fikstürleriyle kanıtlanır.
+Sahip kararı (2026-10-19): Go sürümü kapsam dışıdır. [Go planı](../plans/2026-10-18-go-port-plan.md) tarihsel kayıt olarak kalır. `spec/` dizini ve uyum fikstürleri üretilmeyecektir; `platform.*` sözleşmesi (tablolar, kilit anahtarı metinleri, hata kodları) D14 uyarınca yine donmuş sayılır.
 
 ## 9. Çalışma sırası
 
-[Ana yol haritası](../plans/2026-10-18-roadmap-remaining.md) fazları: **F0** kararlar ve hijyen → **F1** yeniden adlandırma ve paketleme (sonraki işlerin son adlarla inmesi için erken) → **F2** fencing ve kontrol düzlemi dayanıklılığı → **F3** bağlantı/PgBouncer özellikleri → **F4** bölge modeli → **F5** orijinal yol haritasının kalanı (kapasite modeli D, kılavuz F, sağlayıcı doğrulamaları) → **F6** kesintisiz taşıma ve DR → **F7** Go. Sürüm kapıları: `v0.1` (F0–F2: tek bölgede eksiksiz, yayınlanabilir), `v0.2` (F3), `v0.3` (F4, sözleşme dondurma), `v0.4` (F6), Go `v0.1` (`v0.3` sonrası), `v1.0` (soak).
+[Ana yol haritası](../plans/2026-10-18-roadmap-remaining.md) fazları: **F0** kararlar ve hijyen → **F1** yeniden adlandırma ve paketleme (sonraki işlerin son adlarla inmesi için erken) → **F2** fencing ve kontrol düzlemi dayanıklılığı → **F3** bağlantı/PgBouncer özellikleri → **F4** bölge modeli → **F5** orijinal yol haritasının kalanı (kapasite modeli D, kılavuz F, sağlayıcı doğrulamaları) → **F6** kesintisiz taşıma ve DR → ~~**F7** Go~~ (iptal). Sürüm kapıları: `v0.1` (F0–F2: tek bölgede eksiksiz, yayınlanabilir), `v0.2` (F3), `v0.3` (F4), `v0.4` (F6), `v1.0` (soak).
 
 ## 10. Sahibe kalanlar
 

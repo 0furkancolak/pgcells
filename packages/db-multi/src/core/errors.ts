@@ -11,6 +11,14 @@ export class AppError extends Error {
   }
 }
 
+/** `DATABASE_TIMEOUT`. `workStarted` is `false` when the deadline expired before the statement was sent (no connection could be acquired in time), so nothing ran and
+ * a retry cannot repeat a side effect; `true` when the statement was running (it may have committed). */
+export class DeadlineError extends AppError {
+  constructor(readonly workStarted: boolean) {
+    super("DATABASE_TIMEOUT", "Database query deadline exceeded");
+  }
+}
+
 /** Driver-independent code: an AppError code, SQLSTATE or connection code. Bun carries SQLSTATE in `errno`; pg gives no code on disconnects. */
 export function errorCode(error: unknown): string {
   if (error instanceof AppError) return error.code;

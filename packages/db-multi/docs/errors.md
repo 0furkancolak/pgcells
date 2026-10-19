@@ -116,7 +116,7 @@ The CLI writes the error to stderr as `{"error": "<code>", "message": "…"}` an
 | `MOVE_NOT_FOUND` | The move ID does not exist | Take the ID from the `move` output |
 | `MOVE_TERMINAL` | An attempt to resume a rolled-back move | Start a new `move` |
 | `SAME_DATABASE` | The tenant is already on the target database | — |
-| `TARGET_EXISTS` | The target has a schema of the same name (e.g. a copy left from an old move) | Inspect; run the `DROP SCHEMA … CASCADE` in the message on that database and try again |
+| `TARGET_EXISTS` | The target has a schema of the tenant's own name (a copy left by a move completed before fencing existed, or a manual restore) | Inspect; run the `DROP SCHEMA … CASCADE` in the message on that database and try again |
 | `TARGET_RESERVED` | The target schema is reserved for another move | Complete/roll back that move |
 | `ROLLBACK_NOT_ALLOWED` | The database switch has happened or there is no failed move to roll back | `resume-move` |
 | `COPY_MISMATCH` | The copy's fingerprint did not match the source's | Verify the writers are stopped and `resume-move` |

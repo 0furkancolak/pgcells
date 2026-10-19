@@ -86,3 +86,24 @@ test("createDatabase reads DATABASE_URLS when no config is given", async () => {
     process.env.DATABASE_URLS = previous;
   }
 });
+
+test("poolGauges registers observable gauges that read db.stats() when the SDK collects", async () => {
+  const { poolGauges } = await import("../../telemetry");
+  const callbacks = new Map<string, (result: { observe(value: number, attributes?: Record<string, string | number>): void }) => void>();
+  const meter = {
+    createObservableGauge: (name: string) => ({ addCallback: (callback: never) => void callbacks.set(name, callback) }),
+  };
+  const pool = { inUse: 2, waiting: 1, maxPending: 64, acquireP50Ms: 0.4, acquireP99Ms: null, expiredDiscarded: 3, busyRejected: 5 };
+  poolGauges({ stats: () => ({ databases: { db0: pool, "db0#1": { ...pool, inUse: 0 } }, contexts: { active: 7, tenantBusyRejected: 0, draining: false } }) }, meter);
+  expect([...callbacks.keys()]).toEqual(
+    expect.arrayContaining(["pgcells.pool.in_use", "pgcells.pool.waiting", "pgcells.pool.acquire_p99_ms", "pgcells.pool.busy_rejected", "pgcells.contexts.active"]),
+  );
+  const observed = (name: string) => {
+    const seen: [number, Record<string, string | number> | undefined][] = [];
+    callbacks.get(name)?.({ observe: (value, attributes) => void seen.push([value, attributes]) });
+    return seen;
+  };
+  expect(observed("pgcells.pool.in_use")).toEqual([[2, { "db.namespace": "db0" }], [0, { "db.namespace": "db0#1" }]]);
+  expect(observed("pgcells.pool.acquire_p99_ms")).toEqual([]); // no samples yet: nothing is observed rather than a fake zero
+  expect(observed("pgcells.contexts.active")).toEqual([[7, undefined]]);
+});

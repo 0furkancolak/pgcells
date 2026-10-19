@@ -151,6 +151,17 @@ The ratio to the raw driver is in the same range as the previous measurement for
 - **Why it is not the default:** PgBouncer needs `max_prepared_statements > 0` (the current setup is 0). Because the SQL text contains the tenant schema, the number of statements becomes *query x tenant* (`search_path` is not used). PgBouncer's LRU bounds the server side, but the postgres.js and Bun client-side cache grows without bound as long as the connection lives. The application uses `pgDriver`; the gain on pg is ~5% and pg does not pipeline.
 - **Sending `BEGIN` together with the first statement (pipelining):** in the raw measurement transactions/s rose by 25–60% on postgres.js, with no measurable difference on bun. pg does not support concurrent queries (8.x warns). This would break the guarantee (a unit test) that "if `BEGIN` is not answered, the transaction body never runs", so it was not applied.
 
+### Decision: named prepared statements rejected
+
+2026-10-19, `src/__tests__/bench/prepared-spike.ts`: postgres.js through a real PgBouncer 1.24 with `max_prepared_statements = 100`, 2,000 tenant schemas x 10 query shapes = **20,000 distinct statements** (the SQL text carries the schema, so the count is queries x tenants), 16 concurrent loops, 3 passes, pool of 5, local Docker on a busy laptop (single run, expect +/-30 % noise).
+
+| | statements/s | client heap growth | failures |
+|---|---:|---:|---:|
+| `prepare: false` (current) | 3,528 / 1,684 | none | 0 |
+| `prepare: true` | 3,587 / 1,333 | +27 MB per run | 0 |
+
+With the working set far above PgBouncer's 100 prepared statements the earlier ~2x gain is gone (the server side re-parses constantly), while the client-side statement cache grows with every distinct statement on every connection of the pool. Extrapolated to 200,000 statements (20 shapes x 10,000 tenants) over 5 connections that is on the order of a gigabyte. A bounded variant would have to evict inside postgres.js and Bun SQL, which neither exposes. **Decision: not implemented**; the driver option stays `prepare: false`. Re-run the spike (`RUN_INTEGRATION=1 bun src/__tests__/bench/prepared-spike.ts [tenants] [shapes] [rounds]`) if a driver gains a bounded statement cache.
+
 ### Span timeline (`bench:spans`, latest run)
 
 `spans-2026-09-15T11-08-05Z`, driver `bun`, local compose stack (p50 ms).
