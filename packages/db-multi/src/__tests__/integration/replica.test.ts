@@ -11,7 +11,7 @@ integration("reads come from the replica: a paused replica stays stale while the
     const db = f.runtime([REPLICA_URL], { replicaMaxLagMs: 3_600_000 });
     await pauseReplay(f.replica);
     await db.withTenant(f.tenantId, (t) => t.query(createUser, [crypto.randomUUID(), "fresh", uniqueEmail()]));
-    expect(names(await db.withTenantRead(f.tenantId, (t) => t.query(listUsers, [50, 0])))).not.toContain("fresh"); // replica bayat
+    expect(names(await db.withTenantRead(f.tenantId, (t) => t.query(listUsers, [50, 0])))).not.toContain("fresh"); // replica is stale
     expect(names(await db.withTenant(f.tenantId, (t) => t.query(listUsers, [50, 0])))).toContain("fresh"); // primary
     await resumeReplay(f.replica);
     await caughtUp(f.primary, f.replica);
@@ -68,7 +68,7 @@ integration("RequestDb: after a write in the same request the read sees it even 
     await request.tenant.query(createUser, [crypto.randomUUID(), "mine", uniqueEmail()]);
     expect(names(await request.tenantRead.query(listUsers, [50, 0]))).toContain("mine");
     const other = createDbScope(db, f.tenantId);
-    expect(names(await other.tenantRead.query(listUsers, [50, 0]))).not.toContain("mine"); // başka istek replica'yı görür
+    expect(names(await other.tenantRead.query(listUsers, [50, 0]))).not.toContain("mine"); // another request sees the replica
   } finally {
     await f.close();
   }

@@ -1,8 +1,8 @@
-/** Span zaman çizelgesi (`bun src/__tests__/bench/spans.ts [driver]`): `onSpan` ile gerçek işlemler; adım başına süreler
- * `results/spans-<stamp>.json` dosyasına yazılır. Yerel compose yığınını kullanır (yönetim için doğrudan URL'ler, çalışma zamanı için PgBouncer):
- *  management  provision (tenant kilidi, oturum, seçim, claim, şema, her migration, her seed, aktivasyon), migrate/seed no-op'ları,
- *              tenant başına tam + artımlı yedek, move fazları (placement önbellek beklemesi dahil)
- *  request     withTenant nokta okuması (soğuk placement okuması ve önbellekli), insert transaction: acquire, query, transaction */
+/** Span timeline (`bun src/__tests__/bench/spans.ts [driver]`): real operations via `onSpan`; per-step durations are written to
+ * `results/spans-<stamp>.json`. Uses the local compose stack (direct URLs for management, PgBouncer for runtime):
+ *  management  provision (tenant lock, session, selection, claim, schema, each migration, each seed, activation), migrate/seed no-ops,
+ *              full + incremental backup per tenant, move phases (including the placement cache wait)
+ *  request     withTenant point read (cold placement read and cached), insert transaction: acquire, query, transaction */
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

@@ -1,7 +1,7 @@
-/** Benchmark HTTP düzeneği. Yalnızca paketin açık girişlerini kullanır: `@0furkancolak/pgcells` (createDatabase, tenantFromHost, withTenant),
- * `@0furkancolak/pgcells/drivers/*` içinden bir sürücü, üretilmiş sorgular, `prepareQuery` (`@0furkancolak/pgcells/management`; bench'e özel okumalar için
- * açılışta bir kez derlenir, codegen ile aynı derleyici) ve `@0furkancolak/pgcells/auth`. Tenant = Host başlığı `<id>.bench.test` ya da `?tenant=<id>`.
- * Env: DATABASE_URLS (PgBouncer URL'leri), BENCH_DRIVER=bun|postgres|pg, BENCH_POOL_MAX (DB başına, varsayılan 10), PORT, BETTER_AUTH_SECRET. */
+/** Benchmark HTTP harness. Uses only the package's public entry points: `@0furkancolak/pgcells` (createDatabase, tenantFromHost, withTenant),
+ * a driver from `@0furkancolak/pgcells/drivers/*`, generated queries, `prepareQuery` (`@0furkancolak/pgcells/management`; for bench-specific reads,
+ * compiled once at startup, same compiler as codegen) and `@0furkancolak/pgcells/auth`. Tenant = Host header `<id>.bench.test` or `?tenant=<id>`.
+ * Env: DATABASE_URLS (PgBouncer URLs), BENCH_DRIVER=bun|postgres|pg, BENCH_POOL_MAX (per DB, default 10), PORT, BETTER_AUTH_SECRET. */
 import { betterAuth } from "better-auth";
 import { createDatabase, errorCode, loadConfig, type Placement, tenantFromHost } from "@0furkancolak/pgcells";
 import { authTables, createTenantAuth } from "@0furkancolak/pgcells/auth";
@@ -14,8 +14,8 @@ const driver = await loadDriver(driverName);
 const poolMax = Number(process.env.BENCH_POOL_MAX ?? 10);
 const db = createDatabase(loadConfig(), { driver, poolMax });
 
-// "Normal" taban çizgisi (/raw/*): aynı sürücü ve URL'ler, elle yazılmış şema nitelikli SQL; paket yönlendirmesi yok, placement
-// açılışta bir kez okunur.
+// "Normal" baseline (/raw/*): same driver and URLs, hand-written schema-qualified SQL; no package routing, placement
+// is read once at startup.
 const rawPools = (process.env.DATABASE_URLS ?? "").split(",").map((url) => driver(url, { max: poolMax, idleTimeoutSeconds: 30, maxLifetimeSeconds: 1800, connectTimeoutSeconds: 10 }));
 const rawPlacements = new Map(
   (await rawPools[0]!.query<{ tenant_id: string; database_id: string; schema_name: string }>("SELECT tenant_id, database_id, schema_name FROM platform.placements")).map(
@@ -30,7 +30,7 @@ const authFor = createTenantAuth(db, (tenant) => betterAuth({ ...tenant.options,
 });
 
 const getUser = prepareQuery("SELECT id::text AS id, name, email FROM users WHERE id = $1::uuid");
-// ORDER BY users.id (metin takma adı `id` değil): sayfayı birincil anahtar indeksi karşılar.
+// ORDER BY users.id (not the text alias `id`): the primary key index serves the page.
 const pageUsers = prepareQuery("SELECT id::text AS id, name FROM users WHERE id > $1::uuid ORDER BY users.id LIMIT $2");
 const insertUser = prepareQuery("INSERT INTO users (id, name, email) VALUES ($1::uuid, $2::text, $3::text) RETURNING id::text AS id, name");
 
@@ -62,7 +62,7 @@ const routes: Record<string, Handler> = {
     await db.withTenant(tenantId, (tenant) => tenant.transaction((tx) => tx.query(insertUser, [id, "bench insert", benchEmail(id)])));
     return Response.json({ id }, { status: 201 });
   },
-  /** Placement'ı önbellekten alan paket yolu (`dbMiddleware({ placement })` Redis ile bunu yapar): platform okuması yok. */
+  /** Package path that takes placement from the cache (`dbMiddleware({ placement })` does this with Redis): no platform read. */
   "GET /cached/point": async (tenantId, url) => {
     let placement = placementCache.get(tenantId);
     if (!placement) placementCache.set(tenantId, (placement = await db.platform.get(tenantId)));
@@ -90,7 +90,7 @@ const routes: Record<string, Handler> = {
     }
     return Response.json({ id }, { status: 201 });
   },
-  /** Bir kez oturum açar; oturum çerezini döner (k6 onu /auth/session'a geri gönderir). */
+  /** Signs in once; returns the session cookie (k6 sends it back to /auth/session). */
   "POST /auth/sign-in": async (tenantId, _url, req) => {
     const auth = await authFor(tenantId);
     const res = await auth.handler(

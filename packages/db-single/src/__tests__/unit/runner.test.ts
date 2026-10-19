@@ -1,4 +1,4 @@
-/** Runner'ın kilit içi sıralaması sahte sürücüyle: önkoşul kilit oturumunda denetlenir, drift yan etkiden önce çıkar, geri alma span'i. */
+/** Runner's in-lock ordering with a fake driver: the precondition is checked in the lock session, drift surfaces before side effects, rollback span. */
 import { expect, test } from "bun:test";
 import { createConfig } from "../../core/config";
 import type { Span } from "../../core/database";
@@ -12,7 +12,7 @@ const runner = createRunner({ migrations, seeds: compileSeeds([["20260101000002_
 const APPLIED = migrations.map(({ id, checksum }) => ({ id, checksum }));
 
 let port = 7300;
-/** Kilit her zaman alınır, ledger'lar vardır; migration ledger'ı havuz başına `ledger(havuz)` döner (0: yönetim, 1: kilit oturumu). */
+/** The lock is always acquired and ledgers exist; the migration ledger is returned per pool via `ledger(pool)` (0: management, 1: lock session). */
 function management(ledger: (pool: number) => unknown[], onSpan?: (span: Span) => void) {
   const fake = fakeDriver((text, _params, pool) => {
     if (text.includes("pg_locks")) return [{ pid: 100 + pool.index, held: true }];

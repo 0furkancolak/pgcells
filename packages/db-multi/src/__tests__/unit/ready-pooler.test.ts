@@ -5,7 +5,7 @@ import { fakeDriver } from "../fixtures/fake-driver";
 
 const url = "postgres://app:secret-pw@localhost:6432/one";
 
-/** `pid()` her `pg_backend_pid` sorgusunun cevabıdır; kimlik ve kayıt sorguları db0'ı doğrular. */
+/** `pid()` is the answer to every `pg_backend_pid` query; identity and registration queries verify db0. */
 function fixture(pid: () => number | Error) {
   const fake = fakeDriver((text) => {
     if (text.includes("pg_backend_pid")) {
@@ -94,5 +94,5 @@ test("an unreachable database during the probe is DATABASE_UNAVAILABLE, not POOL
 test("a pooler value other than verified or assumed is INVALID_CONFIG, never a silently skipped probe", () => {
   const { open, fake } = fixture(() => 1);
   for (const pooler of ["Verified", "off", "", true, 0, null]) expect(() => open({ pooler: pooler as never })).toThrow(expect.objectContaining({ code: "INVALID_CONFIG" }));
-  expect(fake.pools).toHaveLength(0); // havuz açılmadan reddedilir
+  expect(fake.pools).toHaveLength(0); // rejected before any pool is opened
 });

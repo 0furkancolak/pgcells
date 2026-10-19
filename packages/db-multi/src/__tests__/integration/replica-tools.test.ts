@@ -64,7 +64,7 @@ integration("export --from-replica writes a restorable export marked as replica-
     const stored = JSON.parse(await readFile(join(target, "tenant.json"), "utf8")) as { source?: string; replayLsn?: string };
     expect(stored.source).toBe("replica");
     expect(stored.replayLsn).toMatch(/^[0-9A-F]+\/[0-9A-F]+$/);
-    // Geri yükleme birebir aynı veriyi getirir.
+    // Restore brings back exactly the same data.
     await forgetTenant(f.management, f.tenantId);
     await restoreTenant(f.management, f.tenantId, target);
     expect(names(await db.withTenant(f.tenantId, (t) => t.query(listUsers, [50, 0])))).toEqual(["alice", "bob"]);
@@ -85,9 +85,9 @@ integration("backup --from-replica is always full, marked replica, and never poi
     const manifest = JSON.parse(await readFile(join(root, second.id, "manifest.json"), "utf8")) as { source?: string; replayLsn?: Record<string, string> };
     expect(manifest.source).toBe("replica");
     expect(Object.keys(manifest.replayLsn ?? {})).toEqual(["db0"]);
-    const primary = await backupAll(f.management, root, only); // replica setini taban alır, ama işaret olmadığı için yeniden yazar
+    const primary = await backupAll(f.management, root, only); // takes the replica set as base, but rewrites it since there is no marker
     expect([primary.written, primary.unchanged]).toEqual([1, 0]);
-    const again = await backupAll(f.management, root, only); // şimdi artımlı: değişmemiş
+    const again = await backupAll(f.management, root, only); // now incremental: unchanged
     expect([again.written, again.unchanged]).toEqual([0, 1]);
   } finally {
     await rm(root, { recursive: true, force: true });

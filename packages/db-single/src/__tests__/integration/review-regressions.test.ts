@@ -24,7 +24,7 @@ integration("database-default server timeouts cancel lock waits and long stateme
     try {
       await ready;
       const started = performance.now();
-      // `migrate`in yazdığı runtime varsayılanları: lock_timeout 1s, statement_timeout 5s.
+      // Runtime defaults written by `migrate`: lock_timeout 1s, statement_timeout 5s.
       expect(["55P03", "DATABASE_TIMEOUT"]).toContain((await failure(db.query(prepareQuery("SELECT id FROM locked")))) ?? "");
       expect(performance.now() - started).toBeLessThan(3000);
     } finally {
@@ -42,8 +42,8 @@ integration("database-default server timeouts cancel lock waits and long stateme
   }
 });
 
-/** Her ayrılan bağlantıyı yerel bir saat dilimi, tarih ve interval biçimiyle açan sürücü: yedek bu oturum ayarlarından bağımsız olmalı.
- * Her COMMIT'ten sonra bağlantının saat dilimi `zones`'a yazılır: dışa aktarmanın kanonik biçimi transaction'a özel kalmalı. */
+/** Driver that opens every reserved connection with a local time zone, date style and interval style: the backup must not depend on these session settings.
+ * After every COMMIT the connection's time zone is written to `zones`: the export's canonical form must stay transaction-local. */
 const localFormats = (zones: string[]): Driver => (url, options) => {
   const pool = managementDriver(url, options);
   return {
@@ -87,7 +87,7 @@ DROP TABLE events;
     expect(await admin.query(`SELECT occurred_at AT TIME ZONE 'UTC' AS at, day::text AS day, duration::text AS duration FROM ${q(schema, "events")}`)).toEqual([
       { at: new Date("2026-01-01T12:34:56.000Z"), day: "2026-01-02", duration: "1 day 02:00:00" },
     ]);
-    // Kanonik biçim `SET LOCAL` gibi transaction'a özeldir: COMMIT'ten sonra oturum kendi saat dilimine döner.
+    // The canonical form is transaction-local like `SET LOCAL`: after COMMIT the session returns to its own time zone.
     expect(zones.length).toBeGreaterThan(0);
     expect(zones.every((zone) => zone === "America/New_York")).toBe(true);
   } finally {

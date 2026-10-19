@@ -29,8 +29,8 @@ async function withBackup(work: (ctx: { m: Management; schema: string; admin: Da
     await rm(dir, { recursive: true, force: true });
   }
 }
-/** Sırası `ADD VALUE ... BEFORE` ile değişmiş, tırnak/ters bölü/boşluk/unicode etiketli enum; enum ve enum[] sütunları, default'lar,
- * CHECK, kısmi ve ifade index'i; NULL'lu satırlar. */
+/** An enum whose order was changed with `ADD VALUE ... BEFORE`, with quote/backslash/space/unicode labels; enum and enum[] columns, defaults,
+ * CHECK, partial and expression index; rows with NULLs. */
 async function withEnums(admin: Database, schema: string) {
   const [status, items] = [q(schema, "status"), q(schema, "items")];
   await admin.exec(`CREATE TYPE ${status} AS ENUM ('b', 'it''s', 'back\\slash', 'çğ')`);
@@ -46,8 +46,8 @@ const LABELS = ["b", "a b", "it's", "back\\slash", "çğ"];
 const labels = async (admin: Database, schema: string) =>
   JSON.parse((await admin.query<{ l: string }>(`SELECT to_json(enum_range(NULL::${q(schema, "status")}))::text AS l`))[0]?.l ?? "null") as string[];
 
-/** `schema`'daki kısıtların (yabancı anahtar) ve default'ların (sequence) kendi tabloları dışında başvurduğu ilişkilerin schema'ları:
- * katalog metni `public`'i nitelemesiz yazdığından metin karşılaştırması bunu göremez. */
+/** Schemas of the relations that constraints (foreign keys) and defaults (sequences) in `schema` reference outside their own tables:
+ * the catalog text writes `public` unqualified, so a text comparison cannot see it. */
 const referencedSchemas = async (admin: Database, schema: string) =>
   (
     await admin.query<{ ns: string }>(
@@ -76,10 +76,10 @@ integration("export then restore into a dropped schema reproduces tables, rows, 
     const restored = await restoreSchema(m, join(dir, "x"), { registry: NEW });
     expect(restored).toMatchObject({ restoredFrom: join(dir, "x"), migrationsApplied: [], rows: exported.rows });
     expect(await dump(admin, schema)).toEqual(before);
-    // serial dizisi kaldığı yerden sürer
+    // the serial sequence continues where it left off
     await admin.exec(`INSERT INTO ${q(schema, "users")} (email) VALUES ('c@example.com')`);
     expect((await admin.query<{ id: number }>(`SELECT max(id) AS id FROM ${q(schema, "users")}`))[0]?.id).toBe(3);
-    // geri yüklenen schema'da migrate bir şey yapmaz
+    // migrate does nothing in the restored schema
     expect(await createRunner(NEW).migrate(m)).toEqual({ dryRun: false, migrations: [] });
   });
 });
@@ -93,7 +93,7 @@ integration("a backup restores into a different schema name too", async () => {
     try {
       await restoreSchema(target, join(dir, "x"), { registry: NEW });
       expect(await dump(admin, other)).toEqual(await dump(admin, schema));
-      // varsayılanlar, yabancı anahtarlar ve index'ler kaynak schema'ya değil hedefe bağlıdır
+      // defaults, foreign keys and indexes are bound to the target, not the source schema
       expect(await definitions(admin, other)).not.toContain(schema);
     } finally {
       await target.close();
@@ -120,7 +120,7 @@ integration("enums, enum[] columns and enum defaults, CHECKs and indexes round-t
       await restoreSchema(target, join(dir, "x"), { registry: OLD });
       expect(await dump(admin, other)).toEqual(rows);
       expect(await labels(admin, other)).toEqual(LABELS);
-      // tip, default, CHECK ve index'ler kaynak schema'ya değil hedefe bağlıdır
+      // type, default, CHECK and indexes are bound to the target, not the source schema
       const restored = await definitions(admin, other);
       expect(restored).not.toContain(schema);
       expect(restored).toContain(`column items.all_s #3 ${other}.status[]`);
@@ -136,12 +136,12 @@ integration("the default schema public exports, restores in place and restores i
   const [admin, other] = [raw(), testSchema()];
   const [m, target] = [createTestManagement(), createTestManagement({ schema: other })];
   const dir = await mkdtemp(join(import.meta.dir, "../../../.tmp-backup-"));
-  // `public` paylaşılır (leak-guard): test kendi tablolarını ve tipini siler
+  // `public` is shared (leak-guard): the test drops its own tables and type
   const clean = () => admin.exec(`DROP TABLE IF EXISTS public.items, public.posts, public.users, public._migrations CASCADE; DROP TYPE IF EXISTS public.status`);
   try {
     expect(await schemaIsEmpty(admin, "public")).toBe(true);
     await seeded(m, "public", admin);
-    // `public` çözüm yolunda: katalog enum'u nitelemesiz yazar (`'b'::status`)
+    // `public` is on the resolution path: the catalog writes the enum unqualified (`'b'::status`)
     await withEnums(admin, "public");
     const before = await dump(admin, "public");
     await exportSchema(m, join(dir, "x"));
@@ -191,7 +191,7 @@ integration("restore refuses a schema that already has objects and changes nothi
     expect(await failure(restoreSchema(m, join(dir, "x"), { registry: NEW }))).toBe("SCHEMA_NOT_EMPTY");
     expect(await dump(admin, schema)).toEqual(before);
     expect(await schemaIsEmpty(admin, schema)).toBe(false);
-    // yalnızca artakalan bir enum tipi de schema'yı dolu sayar
+    // a leftover enum type alone also makes the schema count as non-empty
     await dropSchema(admin, schema);
     await admin.exec(`CREATE SCHEMA ${q(schema)}; CREATE TYPE ${q(schema, "leftover")} AS ENUM ('x')`);
     expect(await schemaIsEmpty(admin, schema)).toBe(false);
@@ -218,16 +218,16 @@ integration("export refuses an existing folder, leaves no .partial behind on fai
     await exportSchema(m, join(dir, "x"));
     expect(await failure(exportSchema(m, join(dir, "x")))).toBe("BACKUP_EXISTS");
     expect(await failure(restoreSchema(m, join(dir, "missing"), { registry: NEW }))).toBe("BACKUP_NOT_FOUND");
-    // desteklenmeyen nesne (view) → hiçbir dosya kalmaz
+    // unsupported object (view) → no file is left behind
     await admin.exec(`CREATE VIEW ${q(schema, "v")} AS SELECT id FROM ${q(schema, "users")}`);
     expect(await failure(exportSchema(m, join(dir, "y")))).toBe("UNSUPPORTED_SCHEMA");
     expect((await readdir(dir)).filter((name) => name.startsWith("y"))).toEqual([]);
-    // ileti engelleyen nesneyi adlandırır (taşınamayan sütun türü, ör. PostGIS geometry, `tablo.sütun` olarak)
+    // the message names the blocking object (a column type that cannot be carried, e.g. PostGIS geometry, as `table.column`)
     await expect(exportSchema(m, join(dir, "y"))).rejects.toThrow(/: v$/);
     await admin.exec(`DROP VIEW ${q(schema, "v")}; CREATE TABLE ${q(schema, "shapes")} (id integer PRIMARY KEY, p money)`);
     await expect(exportSchema(m, join(dir, "y"))).rejects.toThrow(/: shapes\.p$/);
-    // domain, range, composite, fonksiyon ve başka schema'daki enum: tip/rutin ve onu kullanan sütun adlandırılır (ihlal edilen her
-    // kural bildirilir); değerler iletiye girmez
+    // domain, range, composite, function and an enum in another schema: the type/routine and the column using it are named (every violated
+    // rule is reported); values do not enter the message
     const elsewhere = testSchema();
     try {
       await admin.exec(`DROP TABLE ${q(schema, "shapes")}; CREATE SCHEMA ${q(elsewhere)}; CREATE TYPE ${q(elsewhere, "mood")} AS ENUM ('secret_value');
@@ -296,7 +296,7 @@ integration("a character(n) cast in a default or CHECK exports and restores like
     await dropSchema(admin, schema);
     await restoreSchema(m, join(dir, "x"), { registry: OLD });
     expect(await dump(admin, schema)).toEqual(rows);
-    // Tanımlar (default ve CHECK) yeni schema'da yine character(3) cast'iyle kurulur.
+    // Definitions (default and CHECK) are recreated in the new schema with the character(3) cast again.
     const shape = await definitions(admin, schema);
     expect(shape).toContain("'abc'::character(3)");
     expect(shape).toContain("(label)::character(3)");
@@ -324,9 +324,9 @@ integration("backup writes a full timestamped set per run, --keep prunes older o
 integration("objects owned by an extension in the schema block neither export nor restore", async () => {
   await withBackup(async ({ m, schema, admin, dir }) => {
     await admin.exec(`CREATE SCHEMA ${q(schema)}; CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA ${q(schema)}; CREATE EXTENSION IF NOT EXISTS pg_stat_statements SCHEMA ${q(schema)}`);
-    // eklentiye ait enum da kopyalanmaz ve reddedilmez
+    // the extension's own enum is neither copied nor refused
     await admin.exec(`CREATE TYPE ${q(schema, "ext_kind")} AS ENUM ('x'); ALTER EXTENSION pgcrypto ADD TYPE ${q(schema, "ext_kind")}`);
-    // eklentinin tablosundaki index'in o enum'a cast'i de engel değildir
+    // an index on the extension's table that casts to that enum is no obstacle either
     await admin.exec(`CREATE TABLE ${q(schema, "ext_table")} (id integer); CREATE INDEX ext_table_idx ON ${q(schema, "ext_table")} (id) WHERE 'x'::${q(schema, "ext_kind")} IS NOT NULL;
       ALTER EXTENSION pgcrypto ADD TABLE ${q(schema, "ext_table")}`);
     await createRunner(OLD).migrate(m);
@@ -336,7 +336,7 @@ integration("objects owned by an extension in the schema block neither export no
     const meta = (await Bun.file(join(dir, "x", "backup.json")).json()) as { shape: { tables: { name: string }[]; enums: unknown[] } };
     expect(meta.shape.tables.map((table) => table.name)).toEqual(["_migrations", "users"]);
     expect(meta.shape.enums).toEqual([]);
-    // eklentiler schema'da kalır; yalnızca uygulama tabloları silinir, geri yükleme yine de çalışır
+    // extensions stay in the schema; only application tables are dropped, and restore still works
     await admin.exec(`DROP TABLE ${q(schema, "users")}, ${q(schema, "_migrations")}`);
     expect(await schemaIsEmpty(admin, schema)).toBe(true);
     await restoreSchema(m, join(dir, "x"), { registry: OLD });

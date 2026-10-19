@@ -16,7 +16,7 @@ function run(replica: Replica = {}) {
     const onReplica = pool.url.includes("replica.example.com");
     if (!/^\s*(SELECT|SHOW)\b/.test(text)) throw new Error("Doctor must be read-only");
     if (onReplica && replica.fail) throw Object.assign(new Error(`unreachable ${pool.url}`), { code: "ECONNREFUSED" });
-    if (text.includes("pg_backend_pid")) return [{ pid: onReplica ? (replica.pooled ? 7 : ++pid) : 100 + pool.index }]; // primary: oturum başına sabit pid (doğrudan bağlantı)
+    if (text.includes("pg_backend_pid")) return [{ pid: onReplica ? (replica.pooled ? 7 : ++pid) : 100 + pool.index }]; // primary: a fixed pid per session (direct connection)
     if (text.includes("pg_current_wal_lsn")) return [{ lsn: "0/3000000" }];
     if (text.includes("pg_is_in_recovery")) return [{ in_recovery: replica.inRecovery ?? true, caught_up: false, lag_ms: replica.lagMs ?? 30 }];
     if (text.includes("set_config")) return [{}];
@@ -52,7 +52,7 @@ test("a healthy direct replica passes every check, so a valid configuration keep
     replica_lag: true,
     replica_identity: true,
     replica_runtime_timeouts: true,
-    replica_pooled: true, // yalnızca bilgi: doğrudan URL doctor'ı başarısız yapmaz
+    replica_pooled: true, // informational only: a direct URL does not make doctor fail
   });
 });
 
@@ -62,7 +62,7 @@ test("a primary given as replica, a lagging replica, another cluster and missing
   expect((await run({ identity: "db1" }).then(outcome)).replica_identity).toBe(false);
   expect((await run({ settings: "statement_timeout=1" }).then(outcome)).replica_runtime_timeouts).toBe(false);
   expect((await run({ pooled: true }).then(outcome)).replica_pooled).toBe(true);
-  // Bilgi denetimi: doğrudan ve pooler'lı URL aynı denetim adıyla ama farklı ayrıntıyla raporlanır.
+  // Informational check: the direct and the pooled URL are reported under the same check name but with different detail.
   const detail = async (replica: Replica) => replicaChecks(await run(replica)).find((check) => check.check === "replica_pooled")?.detail;
   expect(await detail({ pooled: true })).toContain("goes to a transaction-mode pooler");
   expect(await detail({})).toContain("does not go to a transaction-mode pooler");

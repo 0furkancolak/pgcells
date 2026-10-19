@@ -4,7 +4,7 @@ import { generate } from "../../core/sql/codegen";
 import { prepareQuery } from "../../core/sql/compiler";
 
 const schema = `app_${"a".repeat(32)}`;
-// Migration katlamasının biçimi: tablo → sütunlar.
+// Shape of the migration fold: table → columns.
 const tables = new Map(
   Object.entries({
     students: ["id", "first_name", "last_name", "created_at"],
@@ -12,7 +12,7 @@ const tables = new Map(
     enrollments: ["student_id", "course_id"],
   }).map(([table, columns]) => [table, columns.map((name) => ({ name }))]),
 );
-/** Derlenmiş SQL, okunabilirlik için schema niteleyicisi çıkarılmış hâliyle. */
+/** Compiled SQL, with the schema qualifier stripped for readability. */
 const compiled = (source: string) => prepareQuery(source, tables).bind(schema).replaceAll(`"${schema}".`, "");
 const rejects = (source: string, message: RegExp = /SQL_UNSUPPORTED/) => expect(() => compiled(source), source).toThrow(message);
 
@@ -73,7 +73,7 @@ test("* over CTEs and subqueries expands from their explicit projections; unknow
     "SELECT q.* FROM students",
   ])
     rejects(source, /list the columns explicitly/);
-  // Tablo listesi olmadan derleyici gerçek tablonun sütunlarını bilemez.
+  // Without a table list the compiler cannot know the real table's columns.
   expect(() => prepareQuery("SELECT * FROM courses")).toThrow(/list the columns explicitly/);
   expect(prepareQuery("SELECT id, title FROM courses").bind(schema)).toBe(`SELECT id, title FROM "${schema}".courses`);
 });

@@ -1,5 +1,5 @@
-/** `dump fetch` saf parçaları: URL doğrulama, container hedefi, pg_dump argümanları ve parola gizleme. Gizli girdinin kendisi
- * `ask-secret.test.ts`tedir. */
+/** The pure parts of `dump fetch`: URL validation, container target, pg_dump arguments and password masking. The hidden input itself
+ * is covered in `ask-secret.test.ts`. */
 import { afterAll, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,7 +11,7 @@ afterAll(async () => {
   for (const dir of dirs) await rm(dir, { recursive: true, force: true });
 });
 
-/** Yalnızca dosya adı kontrolleriyle ilgilenen testler için: URL sorulursa test düşer (DB'ye bağlanılmaz). */
+/** For tests that only care about file-name checks: if the URL is asked for, the test fails (no DB connection). */
 async function failedFetch(file: string, schemas?: readonly string[]) {
   let asked = false;
   const error = await fetchDump(file, {
@@ -73,13 +73,13 @@ test("an existing .partial is refused before the URL question and is never delet
   dirs.push(dir);
   const file = join(dir, "staging.sql.gz");
   const partial = `${file}.partial`;
-  await writeFile(partial, "YARIM INDIRME");
+  await writeFile(partial, "PARTIAL DOWNLOAD");
 
   const failed = await failedFetch(file);
   expect(failed.code).toBe("USAGE");
   expect(failed.message).toContain(partial);
-  expect(failed.asked).toBe(false); // URL sorulmaz, DB'ye bağlanılmaz
-  expect(await readFile(partial, "utf8")).toBe("YARIM INDIRME"); // başka çalıştırmanın dosyası silinmez
+  expect(failed.asked).toBe(false); // the URL is not asked for, no DB connection
+  expect(await readFile(partial, "utf8")).toBe("PARTIAL DOWNLOAD"); // another run's file is not deleted
 });
 
 test("redact never throws: a password that is not a valid percent escape is hidden as it is", () => {

@@ -13,7 +13,7 @@ test("JSON, regex and containment operators pass through unchanged", () => {
     expect(bind(`SELECT id FROM events WHERE data ${op} 'x'`)).toBe(`SELECT id FROM ${qualified}events WHERE data ${op} 'x'`);
 });
 
-// Parser `#>` işlecini ayrıştıramıyor (ölçüldü); eşdeğeri `jsonb_extract_path` (jsonb döndürür) izinlidir.
+// The parser cannot parse the `#>` operator (measured); its equivalent `jsonb_extract_path` (returns jsonb) is allowed.
 test("#> is a parser gap and is rejected", () => {
   rejects("SELECT data #> '{a}' AS v FROM events");
 });
@@ -51,7 +51,7 @@ test("every new construct is a read-only query", () => {
   expect(prepareQuery("SELECT data->>'a' AS a FROM events WHERE data @> '{}' AND name ~ 'x'").readOnly).toBe(true);
 });
 
-// `readOnly` izin listesinin yan etkisiz olmasına dayanır; bu bir regresyon bekçisidir (ilk koşuda geçer, ihlali yakalar).
+// Relies on the `readOnly` allow list being free of side effects; this is a regression guard (passes on the first run, catches a violation).
 test("the function allowlist never contains side-effecting functions", () => {
   for (const name of [
     "nextval", "currval", "setval", "lastval", "set_config", "pg_advisory_lock", "pg_advisory_xact_lock", "pg_try_advisory_lock", "pg_notify",
@@ -146,7 +146,7 @@ test("WITH RECURSIVE: the CTE sees itself; the same SQL without RECURSIVE reads 
   expect(bind(`WITH RECURSIVE tree AS (${body}) SELECT id FROM tree`)).toBe(
     `WITH RECURSIVE tree AS (SELECT id, parent_id FROM ${qualified}nodes WHERE id = $1 UNION ALL SELECT n.id, n.parent_id FROM ${qualified}nodes n JOIN tree t ON n.parent_id = t.id) SELECT id FROM tree`,
   );
-  // RECURSIVE olmadan `tree` gövdede gerçek bir tablodur ve PostgreSQL'de de öyle çözülür.
+  // Without RECURSIVE, `tree` in the body is a real table, and PostgreSQL resolves it that way too.
   expect(bind(`WITH tree AS (${body}) SELECT id FROM tree`)).toContain(`JOIN ${qualified}tree t`);
 });
 
@@ -238,7 +238,7 @@ test("tsvector, overlap and network operators and the full-text functions compil
   expect(prepareQuery("SELECT id FROM docs WHERE tsv @@ to_tsquery('simple', $1)").readOnly).toBe(true);
 });
 
-// Final review: `rollup`/`cube` özel çağrıdır (nitelenmez); FROM'da ya da parantezli GROUP BY öğesinde fonksiyon olarak çıkarsa nitelemesiz bir ada çözülür.
+// Final review: `rollup`/`cube` is a special call (not qualified); if it appears as a function in FROM or in a parenthesized GROUP BY item, it resolves to an unqualified name.
 test("rollup and cube are never emitted as plain functions (FROM source, parenthesised GROUP BY item)", () => {
   for (const source of [
     "SELECT c FROM cube(1.0) AS c",

@@ -15,7 +15,7 @@ const placement = {
   placementVersion: 1,
 };
 
-/** Kayıt tutan sahte havuz: `query` ve `transaction(mode)`. */
+/** Recording fake pool: `query` and `transaction(mode)`. */
 function recorder(fail?: { code: string }) {
   const log: { text: string; tenantId?: string }[] = [];
   const modes: (string | undefined)[] = [];

@@ -69,10 +69,10 @@ integration("NOWAIT and SKIP LOCKED contend across two live transactions", async
         await held;
       }),
     );
-    // Kurulum hatası testi bekletmek yerine hazırlığı reddetmeli.
+    // A setup failure must reject the preparation instead of leaving the test hanging.
     await Promise.race([ready, holding]);
     await inSchema(contender, schema)(async (ctx) => {
-      // `samples` migration tablosu değil: `*` derlemede reddedilir (camelCase çıktı adları için sütunlar bilinmeli), sütun açıkça yazılır.
+      // `samples` is not a migration table: `*` is rejected at compile time (the columns must be known for camelCase output names), so the columns are written out.
       expect(() => ctx.query(prepareQuery("SELECT id FROM samples FOR UPDATE"))).toThrow("transaction");
       expect(
         await failure(

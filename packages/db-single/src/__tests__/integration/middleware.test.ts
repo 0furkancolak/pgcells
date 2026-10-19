@@ -8,14 +8,14 @@ import { driver, failure, integration, pooledConfig, withNotes } from "./helpers
 const insert = prepareQuery("INSERT INTO notes (id, body) VALUES ($1::integer, $2::text)");
 const list = prepareQuery("SELECT id, body FROM notes ORDER BY id");
 
-/** Hono'nun kullandığı yüzey kadar sahte context. */
+/** Fake context covering just the surface Hono uses. */
 function context() {
   const vars: { db?: RequestDb } = {};
   const c: MiddlewareContext = { set: (_key, value) => (vars.db = value) };
   return { c, vars };
 }
 
-/** Sürücüyü sarar: açılan havuzları ve kapananları sayar (`perRequest` kapanışı ile paylaşılan havuzu gözlemek için). */
+/** Wraps the driver: counts opened and closed pools (to observe `perRequest` closing versus the shared pool). */
 function tracking() {
   const opened: unknown[] = [];
   const closed: unknown[] = [];
@@ -39,7 +39,7 @@ for (const perRequest of [false, true])
             const db = vars.db as RequestDb;
             await db.query(insert, [id * 10, "q"]);
             await db.transaction(async (tx) => void (await tx.query(insert, [id * 10 + 1, "tx"])));
-            // Geri alınan transaction satır bırakmaz.
+            // A rolled-back transaction leaves no rows.
             await failure(
               db.transaction(async (tx) => {
                 await tx.query(insert, [id * 10 + 2, "abort"]);
@@ -47,12 +47,12 @@ for (const perRequest of [false, true])
               }),
             );
             expect(await db.query(list)).toHaveLength(id * 2);
-            // Replica yok: okuma birincilde tek deyim olarak çalışır, yazan sorgu reddedilir.
+            // No replica: the read runs on the primary as a single statement, and a writing query is rejected.
             expect(await db.read.query(list)).toHaveLength(id * 2);
             expect(await failure(db.read.query(insert as never, [99, "x"]))).toBe("QUERY_NOT_READ_ONLY");
           });
         }
-        // Paylaşılan havuz bir kez açılır ve açık kalır; istek başına havuz her yanıttan sonra kapanır.
+        // The shared pool is opened once and stays open; the per-request pool closes after every response.
         expect(pools.opened).toHaveLength(perRequest ? 2 : 1);
         expect(pools.closed).toHaveLength(perRequest ? 2 : 0);
       } finally {
@@ -72,7 +72,7 @@ integration("createDbScope gives cron and queue jobs the same scope without HTTP
       await dbMiddleware({ database: db })(c, async () => {
         expect(await (vars.db as RequestDb).query(list)).toEqual([{ id: 1, body: "cron" }]);
       });
-      // Middleware verilen veritabanını kapatmaz.
+      // The middleware does not close the database it is given.
       expect(await db.query(list)).toHaveLength(1);
       expect(() => dbMiddleware({ database: db, perRequest: true })).toThrow(expect.objectContaining({ code: "INVALID_CONFIG" }));
     } finally {

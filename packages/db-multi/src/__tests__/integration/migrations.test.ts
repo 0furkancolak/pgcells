@@ -18,15 +18,15 @@ import { createTestManagement, directConfig, driver, enabled, forgetTenant, inte
 
 let app: Management;
 const prefix = `migration-${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
-// Paketin migration'ları: auth tabloları, `users`'a yabancı anahtarlı `user_imports`, sonra auth türü başına rate limit tabloları.
+// The package's migrations: auth tables, `user_imports` with a foreign key to `users`, then rate limit tables per auth type.
 const real = tenantMigrations.map((m) => m.id) as [string, string, string];
 const n = tenantMigrations.length;
 const pendingIds = async (id: string) => (await migrationStatus(app, id)).pending.map((m) => m.id);
 const runnerMarkers = () => app.pools.platform.query("SELECT run_id FROM platform.migration_runner");
 
-/** Test-yerel concurrent index migration'ını taşıyan paket kopyası (ayrı modül grafiği, ayrı registry): paketin migration'ları ve
- * `users` üzerinde index. `user_imports` `users`'ı kilitler, index son migration kalır. Kopyayla kurulan tenant'lar test sonunda
- * silinir: bu dosyanın ve sonraki dosyaların migrate-all'ı drift görmesin. */
+/** A package copy carrying a test-local concurrent index migration (separate module graph, separate registry): the package's migrations and
+ * an index on `users`. `user_imports` locks `users`, the index stays the last migration. Tenants set up with the copy are deleted at the end of the test:
+ * so this file's and later files' migrate-all see no drift. */
 const INDEX_ID = "20260916093027_users_name_index";
 const ids = [...real, INDEX_ID] as [string, string, string, string];
 let copy: Awaited<ReturnType<typeof packageCopy>>;
@@ -68,7 +68,7 @@ afterAll(async () => {
   }
 });
 
-/** db0'da `schema.relation` (tablo/index) ya da `column` verilirse sütunu var mı. */
+/** In db0: whether `schema.relation` (table/index) exists, or the column if `column` is given. */
 const exists = async (schema: string, relation: string, column = "") =>
   (
     await app.pools
@@ -177,8 +177,8 @@ integration("stale runner marker requires explicit recovery and refuses live old
   expect(await recoverMigrations(app)).toEqual({ recovered: false });
 });
 
-/** Kopya registry'si: `user_imports`'tan sonrası geri alınır; sonraki çalıştırma önce `users`'ı kilitlemeli (user_imports yabancı
- * anahtarı), sonra rate limit tabloları ve index. */
+/** The copy's registry: everything after `user_imports` is rolled back; the next run must lock `users` first (user_imports foreign
+ * key), then the rate limit tables and the index. */
 async function rewind(id: string) {
   const p = await pkg.provisionTenant(ext, id, "db0");
   expect(await pkg.rollbackTenant(ext, id, { steps: 3 })).toMatchObject({ migrations: [ids[3], ids[2], ids[1]] });

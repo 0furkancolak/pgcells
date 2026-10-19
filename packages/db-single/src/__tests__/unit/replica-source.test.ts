@@ -21,7 +21,7 @@ test("--from-replica given the primary URL or a list says what it takes instead 
   const m = createManagement(createConfig("postgres://admin@127.0.0.1:7901/app"), { driver: fakeDriver().driver });
   for (const entry of ["postgres://admin@127.0.0.1:7901/app", "postgres://r1/app,postgres://r2/app", "postgres://r1/app, postgres://admin@127.0.0.1:7901/app"])
     await expect(openReplicaSource(m, entry)).rejects.toMatchObject({ code: "INVALID_CONFIG", message: "--from-replica takes exactly one direct replica URL, not the primary's" });
-  // Bozuk ya da schema yönlendiren URL kendi doğrulama hatasıyla çıkar (o mesaj yutulmaz).
+  // A malformed or schema-routing URL surfaces with its own validation error (that message is not swallowed).
   for (const entry of ["mysql://r1/app", "postgres://r1/app?options=-c%20x"])
     await expect(openReplicaSource(m, entry)).rejects.toMatchObject({ code: "INVALID_CONFIG", message: expect.not.stringContaining("--from-replica") });
   await m.close();

@@ -1,5 +1,5 @@
-/** `@0furkancolak/pgcells/auth`: secret (ortak / HKDF), tenant ve platform varsayılanları, LRU, örnek denetimleri, motor üzerindeki Better Auth
- * bağdaştırıcısının SQL'i ve transaction'ı, Better Auth migration dilbilgisi. */
+/** `@0furkancolak/pgcells/auth`: secret (shared / HKDF), tenant and platform defaults, LRU, instance checks, the Better Auth
+ * adapter's SQL and transaction on the engine, the Better Auth migration grammar. */
 import { expect, test } from "bun:test";
 import { hkdfSync } from "node:crypto";
 import type { BetterAuthOptions } from "better-auth";
@@ -14,7 +14,7 @@ import { type Placement, tenantSchema } from "../../core/tenants/model";
 import { fakeDriver, type Handler } from "../fixtures/fake-driver";
 
 const SECRET = "m".repeat(32);
-/** `generateId: false` iken `id` ve başvuran alanlar `uuid` sütunudur. */
+/** With `generateId: false`, `id` and the referencing fields are `uuid` columns. */
 const UUID = "0f8b2f5e-8c1d-4a55-9d61-2d6c1f0b7a10";
 const POOL = { max: 2, idleTimeoutSeconds: 1, maxLifetimeSeconds: 1, connectTimeoutSeconds: 1 };
 
@@ -31,7 +31,7 @@ function fakeRuntime(handler?: Handler) {
   return { fake, state, node, runtime: { platform: { get }, pools: { node } } };
 }
 
-/** Sahte veritabanı yanıtları: sayım, etkilenen satır ve `RETURNING` satırları. */
+/** Fake database responses: count, affected rows and `RETURNING` rows. */
 const rows: Handler = (text) => {
   if (text.startsWith("SELECT count")) return [{ count: "7" }];
   if (/^(UPDATE|DELETE)/.test(text) && !text.includes("RETURNING")) return Object.assign([], { count: text.startsWith("UPDATE") ? 2 : 3 });
@@ -67,10 +67,10 @@ test("createTenantAuth: shared secret, tenant-ID cookie prefix and tenant URL by
   expect(made[0]?.options.database).toBeFunction();
   await authFor("shop");
   expect(made).toHaveLength(1);
-  state.databaseId = "db1"; // taşınan tenant yeni örnek alır
+  state.databaseId = "db1"; // a moved tenant gets a new instance
   await authFor("shop");
   await authFor("globex");
-  await authFor("shop"); // max 1: globex onu çıkardı
+  await authFor("shop"); // max 1: globex evicted it
   expect(made.map((tenant) => tenant.tenantId)).toEqual(["shop", "shop", "globex", "shop"]);
   state.status = "maintenance";
   await expect(authFor("shop")).rejects.toMatchObject({ code: "TENANT_UNAVAILABLE" });
@@ -100,7 +100,7 @@ test("instance checks: cookieCache needs perTenantSecret; an enabled memory rate
   expect(await build(cookieCache, true)).toMatchObject({ options: cookieCache });
   await expect(build({ rateLimit: { enabled: true } })).rejects.toMatchObject({ code: "INVALID_CONFIG", message: expect.stringContaining("rateLimit") });
   await expect(build({ rateLimit: { enabled: true, storage: "memory" }, secondaryStorage: {} })).rejects.toMatchObject({ code: "INVALID_CONFIG" });
-  // Veritabanı deposu auth türünün kendi tablosunu ister: varsayılan `rateLimit` tablosu yoktur ve anahtar (IP + yol) auth türünü içermez.
+  // The database store wants the auth type's own table: there is no default `rateLimit` table, and the key (IP + path) does not include the auth type.
   const database = { enabled: true, storage: "database" };
   await expect(build({ rateLimit: database })).rejects.toMatchObject({ code: "INVALID_CONFIG", message: expect.stringContaining("rateLimitTable") });
   for (const ok of [{ rateLimit: { enabled: true }, secondaryStorage: {} }, { rateLimit: { ...database, ...rateLimitTable("student") } }, { rateLimit: { enabled: false } }, {}])
@@ -212,7 +212,7 @@ test("auth migration: per-auth-type snake_case tables, uuid defaults and inline 
   expect(up).toContain('user_id "pg_catalog"."uuid" NOT NULL REFERENCES "tenant_acme".users (id) ON DELETE CASCADE');
   expect(up).toMatch(/CREATE TABLE "tenant_acme"\.students \([^;]*is_email_verified "pg_catalog"\."bool"/);
   expect(up).toMatch(/REFERENCES "tenant_acme"\.teachers \(id\)/);
-  // Her tablo adı ve referans tenant schema'sıyla nitelenir.
+  // Every table name and reference is qualified with the tenant schema.
   expect(up.match(/\b(?:TABLE|REFERENCES) (?!"tenant_acme"\.)/g)).toBeNull();
   expect(auth?.down?.bind("tenant_acme")).toEqual([
     '\nDROP TABLE "tenant_acme".teacher_two_factors, "tenant_acme".teacher_verifications, "tenant_acme".teacher_accounts, "tenant_acme".teacher_sessions, "tenant_acme".teachers,\n' +
@@ -239,7 +239,7 @@ test("authTables / twoFactorTables: table names per auth type, is_email_verified
   expect(authTables("student").user.fields.emailVerified).toBe("is_email_verified");
   expect(authTables("teacher").user.fields.emailVerified).toBe("is_email_verified");
   expect(twoFactorTables("student").user.fields.twoFactorEnabled).toBe("two_factor_enabled");
-  // Eşlenen her sütun migration'dan katlanan tabloda gerçekten bulunur.
+  // Every mapped column actually exists in the table folded from the migration.
   const { tables } = foldTables(tenantMigrations.flatMap((m) => m.up.statements));
   for (const authType of ["user", "student", "teacher"] as const) {
     const two = twoFactorTables(authType);
@@ -258,7 +258,7 @@ test("authTables / twoFactorTables: table names per auth type, is_email_verified
     expect(() => authTables(bad as AuthType)).toThrow(expect.objectContaining({ code: "INVALID_CONFIG" }));
     expect(() => twoFactorTables(bad as AuthType)).toThrow(expect.objectContaining({ code: "INVALID_CONFIG" }));
   }
-  // Yardımcı eşleme bağdaştırıcıda schema-nitelikli snake_case SQL üretir.
+  // The helper mapping produces schema-qualified snake_case SQL in the adapter.
   const { adapter, sql } = await adapterFor({ ...authTables("teacher"), advanced: { database: { generateId: false } } });
   expect(await adapter.count({ model: "session", where: [{ field: "userId", value: UUID }] })).toBe(7);
   expect(sql()).toEqual(['SELECT count(*) AS count FROM "tenant_acme"."teacher_sessions" WHERE "user_id" = $1']);
@@ -284,7 +284,7 @@ test("adapter uuid keys (generateId false): a malformed id or reference matches 
     'SELECT * FROM "tenant_acme"."users" WHERE "email" = $1 LIMIT 1',
   ]);
   expect(params()[1]).toEqual([UUID]);
-  // Kimliği uygulama üretiyorsa (Better Auth varsayılanı) sütun metindir: değer olduğu gibi gider.
+  // If the application generates the id (the Better Auth default) the column is text: the value goes through as is.
   const text = await adapterFor();
   await text.adapter.findOne({ model: "user", where: [{ field: "id", value: "not-a-uuid" }] });
   expect(text.sql()).toEqual(['SELECT * FROM "tenant_acme"."user" WHERE "id" = $1 LIMIT 1']);
@@ -299,7 +299,7 @@ test("rateLimitTable: one table per auth type in tenant schemas; the platform sc
   const tenant = migrationTables("tenant");
   for (const authType of ["user", "student", "teacher"] as const)
     expect(columnsOf(tenant, rateLimitTable(authType).modelName)).toEqual(["id", "key", "count", "last_request"]);
-  // Panel (`createPlatformAuth`) `user` türünün eşlemesini db0'ın `platform` schema'sında kullanır.
+  // The panel (`createPlatformAuth`) uses the `user` type's mapping in db0's `platform` schema.
   const platform = migrationTables("platform");
   const two = twoFactorTables("user");
   const mappings: [string, Record<string, string>][] = [

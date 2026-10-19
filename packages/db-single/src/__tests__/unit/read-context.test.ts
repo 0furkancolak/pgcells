@@ -6,7 +6,7 @@ const SCHEMA = "app_test";
 const select = prepareQuery("SELECT id FROM students WHERE id = $1::uuid");
 const update = prepareQuery("UPDATE students SET name = $1::text WHERE id = $2::uuid");
 
-/** Kayıt tutan sahte havuz: `query` ve `transaction(mode)`. */
+/** Recording fake pool: `query` and `transaction(mode)`. */
 function recorder(fail?: { code: string }) {
   const log: { text: string }[] = [];
   const modes: (string | undefined)[] = [];
@@ -24,7 +24,7 @@ function recorder(fail?: { code: string }) {
   return { db, log, modes };
 }
 
-/** `replica`: seçilen replica; `configured`: replica yapılandırılmış ama (varsayılan) sağlıklı değil. */
+/** `replica`: the selected replica; `configured`: a replica is configured but (by default) not healthy. */
 function fixture(options: { replica?: ReturnType<typeof recorder>; policy?: "primary" | "error"; configured?: boolean } = {}) {
   const primary = recorder();
   const downs: number[] = [];

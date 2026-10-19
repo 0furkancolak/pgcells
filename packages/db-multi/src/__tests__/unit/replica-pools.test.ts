@@ -12,7 +12,7 @@ const open = () => {
 
 test("replica pools open lazily, in config order, once, with the same pool size", () => {
   const { fake, pools } = open();
-  expect(fake.pools.map((pool) => pool.url)).toEqual(["postgres://p@h/d"]); // yalnızca platform havuzu
+  expect(fake.pools.map((pool) => pool.url)).toEqual(["postgres://p@h/d"]); // only the platform pool
   const first = pools.replicas("db0");
   expect(first).toHaveLength(2);
   expect(fake.pools.map((pool) => pool.url)).toEqual(["postgres://p@h/d", "postgres://r1@h/d", "postgres://r2@h/d"]);

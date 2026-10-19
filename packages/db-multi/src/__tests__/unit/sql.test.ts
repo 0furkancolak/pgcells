@@ -5,7 +5,7 @@ import { isPreparedQuery } from "../../core/sql/query";
 
 const a = `tenant_${"a".repeat(32)}`;
 const b = `tenant_${"b".repeat(32)}`;
-// En dıştaki `*` derlemede açılır: sütunlar migration katlamasının biçimindeki bir tablo listesinden gelir.
+// The outermost `*` is expanded at compile time: the columns come from a table list shaped like the migration fold.
 const tables = new Map([
   ["students", ["id", "name", "status"]],
   ["courses", ["id", "title"]],

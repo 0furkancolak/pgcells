@@ -24,7 +24,7 @@ integration("a direct URL fails the pooler probe and ready(); a transaction pool
   const accepted = createDb(pooledConfig(), { driver });
   try {
     await accepted.ready();
-    await accepted.ready(); // saklanan sonuç
+    await accepted.ready(); // stored result
   } finally {
     await accepted.close();
   }

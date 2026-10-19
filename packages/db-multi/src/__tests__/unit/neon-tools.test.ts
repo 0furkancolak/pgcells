@@ -6,7 +6,7 @@ import { branchNodes, branchUrl, type ExportDeps, exportTenantAt, neonApi, type 
 const KEY = "neon-key-123";
 type Call = { method: string; path: string; query: Record<string, string>; body: unknown; auth: string | null };
 
-/** `routes` her çağrı için gövde döndürür (veya `Response`); çağrılar kaydedilir. */
+/** `routes` returns a body for each call (or a `Response`); calls are recorded. */
 function fakeNeon(routes: (call: Call) => unknown) {
   const calls: Call[] = [];
   const fetch = async (input: URL, init?: RequestInit) => {
@@ -82,7 +82,7 @@ const node = (nodeId: string, projectId: string, branchId: string): NeonNode => 
 const sleeps: number[] = [];
 const timing = { now, pollMs: 7, timeoutMs: 1000, sleep: async (ms: number) => void sleeps.push(ms) };
 
-/** Her `POST /branches` yeni bir branch+endpoint+operasyon döndürür; operasyon ilk sorguda `running`, ikincide `finished`. */
+/** Every `POST /branches` returns a new branch+endpoint+operation; the operation is `running` on the first poll and `finished` on the second. */
 function branchingNeon(options: { failProject?: string; operationStatus?: string } = {}) {
   const polls = new Map<string, number>();
   return fakeNeon(({ method, path }) => {

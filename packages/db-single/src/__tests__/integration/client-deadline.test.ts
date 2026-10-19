@@ -52,7 +52,7 @@ integration("max=1 expired queued writes and transactions never run after the bl
     release();
     await blocker;
   }
-  // Bu bariyer, süresi dolan hiçbir işin bağlantıyı sonradan almadığını da kanıtlar.
+  // This barrier also proves that no expired work takes the connection afterwards.
   expect(await client.query(`SELECT id FROM ${q(schema, "writes")}`)).toHaveLength(0);
   expect(callbackRan).toBe(false);
 });

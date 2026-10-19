@@ -1,6 +1,6 @@
-/** PgBouncer üzerinden sıcak yol mikro benchmark'ı (dbtenancy yığını): ham sürücü ile paket karşılaştırması, sabit süre boyunca
- * eşzamanlı döngüler; rotalar her turda sırayla koşar, özet tur medyanıdır. Kullanım (packages/db-multi içinden):
- * bun <bu dosya> <driver> [seconds] [concurrency] [rounds] [op]; op `query` (varsayılan: tek sorgu) ya da `tx` (BEGIN + sorgu + COMMIT). */
+/** Hot-path micro-benchmark through PgBouncer (dbtenancy stack): raw driver vs package comparison, concurrent loops over a fixed duration;
+ * routes run in turn each round, the summary is the round median. Usage (from packages/db-multi):
+ * bun <this file> <driver> [seconds] [concurrency] [rounds] [op]; op is `query` (default: single query) or `tx` (BEGIN + query + COMMIT). */
 import { createConfig, createDatabase } from "@0furkancolak/pgcells";
 import { bootstrap, createManagement, prepareQuery, provisionTenant } from "@0furkancolak/pgcells/management";
 import { quoteIdentifier } from "../../core/tenants/model";
@@ -31,7 +31,7 @@ const CLEANUP = [
   "DELETE FROM platform.placements WHERE tenant_id IN (SELECT pg_catalog.jsonb_array_elements_text($1::text::jsonb))",
   "DELETE FROM platform.tenants WHERE tenant_id IN (SELECT pg_catalog.jsonb_array_elements_text($1::text::jsonb))",
 ];
-/** Benchmark tenant'larını siler: platform kayıtları ve schema'lar (yerel DB'de kalıntı bırakmaz). */
+/** Deletes the benchmark tenants: platform records and schemas (leaves no residue in the local DB). */
 async function removeBenchTenants() {
   const cleanup = createManagement(createConfig(LOCAL_DIRECT_URLS), { driver });
   const ids = [JSON.stringify(tenants)];
@@ -100,7 +100,7 @@ const summary = Object.fromEntries(
     return [label, { rps: median(runs.map((run) => run.rps)), p50: median(runs.map((run) => run.p50)), p99: median(runs.map((run) => run.p99)) }];
   }),
 );
-// Aynı turdaki ham sürücüye oran (tur medyanı): makinedeki dalgalanma iki rotayı birlikte etkiler.
+// Ratio to the raw driver in the same round (round median): machine noise affects both routes together.
 const ratio = (label: string) => median(out.filter((result) => result.label === label).map((result, i) => result.rps / out.filter((other) => other.label === "raw")[i]!.rps));
 console.log(JSON.stringify({ driver: name, op, concurrency, seconds, rounds, results: out, summary, ratioToRaw: { withTenant: ratio("withTenant"), forPlacement: ratio("forPlacement") } }, null, 1));
 if (spans.size)

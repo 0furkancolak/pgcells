@@ -1,15 +1,15 @@
-/** Ölçek benchmark'ı (`bun run bench:scale`): veri üretimi, sorgular, migration'lar, seed'ler ve tenant taşımaları. Fazlar (`--phase`):
- *  tenants  yük kümesinde (`bench --phase setup` sonrası: 10.000 tenant): bekleyen yokken migrateAll (aynı uzunlukta boşta
- *           pencereye karşı xact farkları), demo provision/reset, 16 ve 64 eşzamanlılıkla bir yeni bekleyen migration ile
- *           migrateAll, yeni install seed'i ile seedAll, 1M satırlık tenant'ta toplu seed, 1M ve 10M satırlık tenant'ların `tools move`'u
- *  big      boyut başına (`--sizes`; rows = `users` satırları) temiz kümede: `--load-tiers` başına yükleme süresi
- *           ve disk boyutu, ardından `--tiers` başına büyük tenant'ta çalışma zamanı sorguları ve migration'lar (sabit varsayılan,
- *           rewrite, k6 yazmaları altında CREATE INDEX CONCURRENTLY, migrate-down)
- * Bench'e özel migration ve seed'ler src/migrations ya da src/seeds'e asla dokunmaz: her deney paketin geçici bir kopyasından
- * ($BENCH_RAW_DIR/packages/<name>) ek dosyalar ve yeniden üretilmiş listelerle koşar; adımı kopyanın kendi scale.ts'i çalıştırır
- * (`--child`), böylece import edilen registry kopyanınkidir. Satır üretimi sunucu tarafı psql'dir (API'yi atlar); sorgular,
- * provision, migration, seed ve move paketten geçer.
- * 1B (ayrı koşu): --phase big --sizes 1000000000 --tiers T4 --load-tiers T4 --storage /Volumes/DEVNAFRU/repo-db-bench-1b */
+/** Scale benchmark (`bun run bench:scale`): data generation, queries, migrations, seeds and tenant moves. Phases (`--phase`):
+ *  tenants  on the load cluster (after `bench --phase setup`: 10,000 tenants): migrateAll with nothing pending (xact deltas against an idle
+ *           window of the same length), demo provision/reset, migrateAll with one new pending migration at concurrency 16 and 64,
+ *           seedAll with a new install seed, bulk seed on a 1M-row tenant, `tools move` of 1M- and 10M-row tenants
+ *  big      per size (`--sizes`; rows = `users` rows) on a clean cluster: load time per `--load-tiers`
+ *           and disk size, then runtime queries and migrations on the big tenant per `--tiers` (constant default,
+ *           rewrite, CREATE INDEX CONCURRENTLY under k6 writes, migrate-down)
+ * Bench-specific migrations and seeds never touch src/migrations or src/seeds: each experiment runs from a temporary copy of the package
+ * ($BENCH_RAW_DIR/packages/<name>) with extra files and regenerated lists; the copy's own scale.ts runs the step
+ * (`--child`), so the imported registry is the copy's. Row generation is server-side psql (bypasses the API); queries,
+ * provision, migration, seed and move go through the package.
+ * 1B (separate run): --phase big --sizes 1000000000 --tiers T4 --load-tiers T4 --storage /Volumes/DEVNAFRU/repo-db-bench-1b */
 import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
@@ -46,7 +46,7 @@ const { values: flags } = parseArgs({
 const RAISED: ManagementOptions = { migrationStatementTimeoutMs: Number(flags["migration-timeout-ms"]) };
 const label = (rows: number) => (rows >= 1e9 ? `${rows / 1e9}b` : `${rows / 1e6}m`);
 
-// ---- Çocuk adımlar (paket kopyası içinde koşar) ----------------------------------------
+// ---- Child steps (run inside the package copy) -----------------------------------------
 
 type StepName = "migrate-tenant" | "rollback" | "migrate-all" | "seed-all" | "seed-tenant" | "provision" | "provision-demo" | "reset-demo" | "move";
 type ChildStep = {
@@ -71,7 +71,7 @@ type ChildResult = {
 };
 type ChildEvent = Record<string, unknown>;
 
-/** Çocuk adımların ortak girdileri: yönetim, adım, tenant, olay raporlayıcı, toplu işlem seçenekleri ve tenant başına kronometre. */
+/** Shared inputs of the child steps: management, step, tenant, event reporter, bulk options and a per-tenant stopwatch. */
 function childContext(m: Management, step: ChildStep, events: ChildEvent[]) {
   const report = (event: ChildEvent) => void events.push(event);
   return {
@@ -97,7 +97,7 @@ const CHILD_STEPS: Record<StepName, (context: ChildContext) => Promise<unknown>>
   "provision-demo": ({ m, step, timed }) => timed((id) => provisionTenant(m, id, step.database, { demo: true })),
   "reset-demo": ({ m, timed }) => timed((id) => resetDemoTenant(m, id)),
   move: async ({ m, tenant, step }) => {
-    // Yükseltilmiş yönetim timeout'larıyla programatik yedek yol; CLI (`tools move`) seçenek geçemez.
+    // Programmatic fallback path with raised management timeouts; the CLI (`tools move`) cannot pass options.
     const { startMove } = await import("../../core/tools/move");
     const move = await startMove(m, tenant, step.database ?? "", true);
     return { status: move.status, phase: move.phase };
@@ -121,13 +121,13 @@ async function childMain(json: string) {
   const ms = performance.now() - started;
   const result = {
     ms: round(ms, 1), error, output, events: eventSummary(step, events),
-    // macOS'ta Bun maxRSS'i bayt (getrusage), Linux'ta KiB olarak raporlar.
+    // On macOS Bun reports maxRSS in bytes (getrusage), on Linux in KiB.
     maxRssMiB: round(process.resourceUsage().maxRSS / (process.platform === "darwin" ? 1048576 : 1024), 1),
   };
   console.log(`BENCH_RESULT ${JSON.stringify(result)}`);
 }
 
-/** Rapor olaylarından tenant başına süreler, koda göre hatalar, başlayan migration'lar, alınan oturumlar ve (tek tenant'ta) adımlar. */
+/** Per-tenant durations from the report events, errors by code, started migrations, sessions taken and (for a single tenant) steps. */
 function eventSummary(step: ChildStep, events: ChildEvent[]) {
   const tenantDone = events.filter((e) => e.status === "succeeded" && !e.migration && !e.seed && typeof e.durationMs === "number");
   const failedByCode: Record<string, number> = {};
@@ -140,7 +140,7 @@ function eventSummary(step: ChildStep, events: ChildEvent[]) {
   };
 }
 
-/** Adımı `pkg` konumundaki paketle koşar; `pollLocks` false değilse her saniye pg_locks / istemci backend'lerini örnekler. */
+/** Runs the step with the package at `pkg`; unless `pollLocks` is false, samples pg_locks / client backends every second. */
 async function child(pkg: string, step: Omit<ChildStep, "urls">, { pollLocks = true } = {}): Promise<ChildResult> {
   log(`  child ${step.step} ${step.tenant ?? ""} ${step.concurrency ?? ""} (${pkg === PACKAGE_DIR ? "package" : pkg.split("/").at(-1)})`);
   const started = Date.now();
@@ -170,7 +170,7 @@ async function child(pkg: string, step: Omit<ChildStep, "urls">, { pollLocks = t
   return result;
 }
 
-/** Ek tenant migration'ları / install seed'leri ve yeniden üretilmiş listelerle paket kopyası (ada göre önbelleklenir). */
+/** Package copy with extra tenant migrations / install seeds and regenerated lists (cached by name). */
 function benchPackage(name: string, migrations: readonly (readonly [string, string])[], seeds: readonly (readonly [string, string])[] = []) {
   if (!migrations.length && !seeds.length) return PACKAGE_DIR;
   const root = join(RAW_DIR, "packages", name);
@@ -187,7 +187,7 @@ function benchPackage(name: string, migrations: readonly (readonly [string, stri
 }
 const migration = (id: string, up: string, down: string) => [id, `--up\n${up}\n\n--down\n${down}\n`] as const;
 
-// ---- Sonuçlar ---------------------------------------------------------------------------
+// ---- Results ----------------------------------------------------------------------------
 
 type Json = Record<string, unknown>;
 interface ScaleResult {
@@ -211,7 +211,7 @@ const save = () => {
   result.updatedAt = new Date().toISOString();
   saveResult(file, result);
 };
-/** Adlandırılmış bir adımı bir kez koşar (sürdürülebilir); hatalar fırlatılmaz, kaydedilir. */
+/** Runs a named step once (resumable); errors are recorded, not thrown. */
 async function step(bucket: Json, key: string, work: () => Promise<unknown>) {
   const existing = bucket[key] as Json | undefined;
   if (existing && !existing.stepError) return existing;
@@ -246,7 +246,7 @@ const count = (db: string, sql: string) => Number(psql(db, sql));
 const schemaOf = (tenant: string) => psql("db0", `SELECT schema_name FROM platform.placements WHERE tenant_id='${tenant}'`);
 const databaseOf = (tenant: string) => psql("db0", `SELECT database_id FROM platform.placements WHERE tenant_id='${tenant}'`);
 
-// ---- Faz: tenants (yük kümesi) ---------------------------------------------------------
+// ---- Phase: tenants (load cluster) -----------------------------------------------------
 
 const userMigration = (k: number) =>
   migration(`20260921${String(k).padStart(2, "0")}0000_bench_users_c${k}`, `ALTER TABLE users ADD COLUMN c${k} text;`, `ALTER TABLE users DROP COLUMN c${k};`);
@@ -256,10 +256,10 @@ const SEEDS = [
   ["20260921221506_bench_bulk_email_verified", "UPDATE users SET email_verified = true WHERE NOT email_verified;\n"],
 ] as const;
 const MOVE_TENANT = "move-1m";
-/** İlk `migrations` users migration'ı ve ilk `seeds` bench seed'i ile paket kopyası. */
+/** Package copy with the first `migrations` users migration and the first `seeds` bench seed. */
 const tenantsPackage = (migrations: number, seeds: number) =>
   benchPackage(`tenants-m${migrations}-s${seeds}`, Array.from({ length: migrations }, (_, i) => userMigration(i + 1)), SEEDS.slice(0, seeds));
-/** Tier'lar boyunca uygulanmış bench migration / seed sayısı; her tier kaldığı yerden devam eder. */
+/** Number of bench migrations / seeds applied across tiers; each tier continues where the previous one left off. */
 type Applied = { migrations: number; seeds: number };
 
 async function tenantsPhase() {
@@ -267,13 +267,13 @@ async function tenantsPhase() {
   const tiers = list(flags.tiers) as TierName[];
   const applied: Applied = { migrations: 0, seeds: 0 };
   for (const tier of tiers) await tierSteps(tier, volume, applied);
-  // 1M satırlık tenant'ta (T4) taşımalar ve toplu seed, ardından T2'de 1M geri taşıma.
+  // Moves and bulk seed on the 1M-row tenant (T4), then a 1M move back to T2.
   const bucket = (result.tenants.moves ??= {});
   await moveSteps(bucket, tiers, volume, applied);
   estimateMove100m(bucket);
 }
 
-/** Bir tier'da: bekleyen yokken migrateAll, demo provision/reset, bir bekleyen migration (c16, c64) ve bir bekleyen seed. */
+/** On one tier: migrateAll with nothing pending, demo provision/reset, one pending migration (c16, c64) and one pending seed. */
 async function tierSteps(tier: TierName, volume: string, applied: Applied) {
   const bucket = (result.tenants[tier] ??= {});
   await ensurePostgres(tier, volume);
@@ -301,7 +301,7 @@ async function tierSteps(tier: TierName, volume: string, applied: Applied) {
   });
 }
 
-/** Bekleyen yokken migrateAll: xact farkları, aynı süredeki boşta pencere ve log_statement=all ile ayrı bir koşunun ifade dökümü. */
+/** migrateAll with nothing pending: xact deltas, an idle window of the same duration, and the statement breakdown of a separate run with log_statement=all. */
 async function migrateAllNoPending(pkg: string, tenantsPerDb: string) {
   const s0 = pgStat();
   const r = await child(pkg, { step: "migrate-all", concurrency: 16, perDatabaseConcurrency: 8 }, { pollLocks: false });
@@ -315,7 +315,7 @@ async function migrateAllNoPending(pkg: string, tenantsPerDb: string) {
   };
 }
 
-/** log_statement=all ile ikinci koşu: bekleyen yokken hangi ifadelerin gönderildiği (ilk 70 karaktere göre gruplanır). */
+/** Second run with log_statement=all: which statements are sent when nothing is pending (grouped by the first 70 characters). */
 async function loggedStatements(pkg: string) {
   psql("db0", "ALTER SYSTEM SET log_statement = 'all'");
   psql("db0", "SELECT pg_reload_conf()");
@@ -337,7 +337,7 @@ async function loggedStatements(pkg: string) {
   return { wallMs: logged.wallMs, totalStatements: total, byStatement: Object.fromEntries(Object.entries(statements).sort((a, b) => b[1] - a[1])) };
 }
 
-/** 1M satırlık tenant'ın hazırlanması, toplu seed ve taşımalar (T4: 1M ve 10M; T2 varsa 1M geri). */
+/** Preparing the 1M-row tenant, bulk seed and moves (T4: 1M and 10M; 1M back if T2 exists). */
 async function moveSteps(bucket: Json, tiers: TierName[], volume: string, applied: Applied) {
   const final = tenantsPackage(applied.migrations, applied.seeds);
   await ensurePostgres("T4", volume);
@@ -348,7 +348,7 @@ async function moveSteps(bucket: Json, tiers: TierName[], volume: string, applie
     await psqlScript("db0", [rowsSql(schema, 1, 1_000_000, true), `ANALYZE "${schema}".users;`].join("\n"));
     return { ...r, rows: 1_000_000, generationSeconds: round((Date.now() - t) / 1000, 1) };
   });
-  // Tüm bench seed'leri (kümülatif, ID sırası): toplu seed sondadır; burada henüz uygulanmamış öncekiler önemsiz insert'lerdir.
+  // All bench seeds (cumulative, in ID order): the bulk seed comes last; the earlier ones not yet applied here are trivial inserts.
   const bulk = tenantsPackage(applied.migrations, SEEDS.length);
   await step(bucket, "bulkSeed1mDefaultTimeouts", () => child(bulk, { step: "seed-tenant", tenant: MOVE_TENANT }));
   if ((bucket.bulkSeed1mDefaultTimeouts as Json | undefined)?.error)
@@ -361,7 +361,7 @@ async function moveSteps(bucket: Json, tiers: TierName[], volume: string, applie
   }
 }
 
-/** Ölçülen 10M taşımasından 100M satırlık tenant taşıma süresinin doğrusal tahmini (bir kez eklenir). */
+/** Linear estimate of the move time of a 100M-row tenant from the measured 10M move (added once). */
 function estimateMove100m(bucket: Json) {
   const big = bucket.move10m_T4 as Json | undefined;
   const fallback = big?.fallback as Json | undefined;
@@ -374,8 +374,8 @@ function estimateMove100m(bucket: Json) {
     });
 }
 
-/** CLI üzerinden `tools move` (varsayılan seçenekler). Başarısız taşıma geri alınır ve yükseltilmiş timeout'larla programatik olarak
- * yeniden denenir. Hedef veritabanında kalmış kaynak şema (README: TARGET_EXISTS), README'nin dediği gibi önce silinir. */
+/** `tools move` through the CLI (default options). A failed move is rolled back and retried programmatically with raised timeouts.
+ * A source schema left behind in the target database (README: TARGET_EXISTS) is dropped first, as the README says. */
 async function move(pkg: string, tenant: string, target: string) {
   const schema = schemaOf(tenant);
   const source = databaseOf(tenant);
@@ -412,7 +412,7 @@ async function move(pkg: string, tenant: string, target: string) {
   return outcome;
 }
 
-// ---- Faz: büyük tenant --------------------------------------------------------------------
+// ---- Phase: big tenant --------------------------------------------------------------------
 
 const Z = [
   migration("20260920081512_bench_note_default", "ALTER TABLE users ADD COLUMN note text NOT NULL DEFAULT 'none';", "ALTER TABLE users DROP COLUMN note;"),
@@ -485,7 +485,7 @@ async function loadBig(tenant: string, users: number) {
     await m.close();
   }
   const chunk = Math.min(1_000_000, users);
-  // CASCADE: session/account/user_imports users'a FK ile bağlıdır.
+  // CASCADE: session/account/user_imports are tied to users by FK.
   await psqlScript("db0", `TRUNCATE "${schema}".users CASCADE;`);
   const rates: number[] = [];
   let t = Date.now();
@@ -520,10 +520,10 @@ async function loadBig(tenant: string, users: number) {
   };
 }
 
-/** Büyük tenant'ta ölçülen, bench'e özel hazır sorgular. */
+/** Bench-specific prepared queries measured on the big tenant. */
 const bigQueries = () => ({
   point: prepareQuery("SELECT id::text AS id, name, email FROM users WHERE id = $1::uuid"),
-  // `ORDER BY users.id`: metin takma adı `id` metne göre sıralardı (seq scan + sort); `offsetPage` bilerek öyle sıralar.
+  // `ORDER BY users.id`: the text alias `id` would sort by text (seq scan + sort); `offsetPage` deliberately sorts that way.
   keyset: prepareQuery("SELECT id::text AS id, name FROM users WHERE id > $1::uuid ORDER BY users.id LIMIT $2"),
   offsetPage: prepareQuery("SELECT id::text AS id, name FROM users ORDER BY id LIMIT $1 OFFSET $2"),
   count: prepareQuery("SELECT count(*)::bigint AS n FROM users"),
@@ -532,7 +532,7 @@ const bigQueries = () => ({
   insertValues: prepareQuery(`INSERT INTO users (id, name, email) VALUES ${Array.from({ length: 1000 }, (_, i) => `($${3 * i + 1}::uuid, $${3 * i + 2}::text, $${3 * i + 3}::text)`).join(", ")}`),
 });
 
-/** `work`'ü `n` kez koşar: ilk çağrı `coldMs`, kalanlar dağılım; hatalar koda göre sayılır. */
+/** Runs `work` `n` times: the first call is `coldMs`, the rest the distribution; errors are counted by code. */
 async function measure(n: number, work: () => Promise<unknown>) {
   const times: number[] = [];
   const errors: Record<string, number> = {};
@@ -562,7 +562,7 @@ async function queries(tenant: string, users: number) {
     return [id, "batch", `${id}@bench.test`];
   };
   const inTenant = <T>(work: (t: Parameters<Parameters<typeof db.withTenant>[1]>[0]) => Promise<T>) => db.withTenant(tenant, work);
-  /** Önce çalışma zamanı (sunucu statement_timeout = bootstrap DB varsayılanı); hata olursa yükseltilmiş timeout'lu yönetim havuzu. */
+  /** Runtime first (server statement_timeout = bootstrap DB default); on error, the management pool with raised timeouts. */
   async function heavy(query: PreparedQuery) {
     const runtime = await measure(3, () => inTenant((t) => t.query(query)));
     const management = Object.keys(runtime.errors).length ? await measure(2, () => m.pools.node(placement.databaseId).query(query.bind(placement.schemaName))) : undefined;
@@ -572,7 +572,7 @@ async function queries(tenant: string, users: number) {
     const out = {
       pointLookup: await measure(501, () => inTenant((t) => t.query(q.point, [random()]))),
       keysetPage20: await measure(301, () => inTenant((t) => t.query(q.keyset, [random(), 20]))),
-      // Metin takma adı `id` ile sıralama: ilk sayfa için bile tam tarama + sort.
+      // Ordering by the text alias `id`: full scan + sort even for the first page.
       offsetPageFirst: await measure(3, () => inTenant((t) => t.query(q.offsetPage, [20, 0]))),
       offsetPageMiddle: await measure(3, () => inTenant((t) => t.query(q.offsetPage, [20, Math.floor(users / 2)]))),
       countUsers: await heavy(q.count),
@@ -626,8 +626,8 @@ async function bigMigrations([z1, z2, z3]: [string, string, string], tenant: str
   return out;
 }
 
-/** k6, PgBouncer + düzenek uygulaması üzerinden aynı tenant'a insert yaparken CREATE INDEX CONCURRENTLY; öncesi, sırası ve
- * sonrası için 10 s pencereler (her pencere bir k6 süreci, ~1 s aralıklarla). */
+/** k6 inserts into the same tenant through PgBouncer + the harness app while CREATE INDEX CONCURRENTLY runs; 10 s windows before, during and
+ * after (each window is one k6 process, ~1 s apart). */
 async function underWrites(pkg: string, tenant: string, rows: number, tier: TierName) {
   await startBouncer();
   await startApp(flags.driver as string, 10);
@@ -666,7 +666,7 @@ async function underWrites(pkg: string, tenant: string, rows: number, tier: Tier
   }
 }
 
-// ---- Ana akış -----------------------------------------------------------------------------------------
+// ---- Main flow ----------------------------------------------------------------------------------------
 
 if (flags.child) await childMain(flags.child);
 else {

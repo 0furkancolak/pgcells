@@ -1,4 +1,4 @@
-/** `@0furkancolak/pgcells-single/auth` bağdaştırıcısı: motor üzerindeki Better Auth SQL'i (operatörler, yazma, eşleme, uuid anahtarları, transaction). */
+/** `@0furkancolak/pgcells-single/auth` adapter: the Better Auth SQL on top of the engine (operators, writes, mapping, uuid keys, transaction). */
 import type { BetterAuthOptions } from "better-auth";
 import { twoFactor } from "better-auth/plugins";
 import { expect, test } from "bun:test";
@@ -7,11 +7,11 @@ import { authTables, twoFactorTables } from "../../core/auth-schema";
 import { connect } from "../../core/database";
 import { fakeDriver, type Handler } from "../fixtures/fake-driver";
 
-/** `generateId: false` iken `id` ve başvuran alanlar `uuid` sütunudur. */
+/** With `generateId: false`, `id` and the referencing fields are `uuid` columns. */
 const UUID = "0f8b2f5e-8c1d-4a55-9d61-2d6c1f0b7a10";
 const POOL = { max: 2, idleTimeoutSeconds: 1, maxLifetimeSeconds: 1, connectTimeoutSeconds: 1 };
 
-/** Sahte veritabanı yanıtları: sayım, etkilenen satır ve `RETURNING` satırları. */
+/** Fake database responses: count, affected rows and `RETURNING` rows. */
 const rows: Handler = (text) => {
   if (text.startsWith("SELECT count")) return [{ count: "7" }];
   if (/^(UPDATE|DELETE)/.test(text) && !text.includes("RETURNING")) return Object.assign([], { count: text.startsWith("UPDATE") ? 2 : 3 });
@@ -120,7 +120,7 @@ test("adapter uuid keys (generateId false): a malformed id or reference matches 
     'SELECT * FROM "app_x"."users" WHERE "email" = $1 LIMIT 1',
   ]);
   expect(params()[1]).toEqual([UUID]);
-  // Kimliği uygulama üretiyorsa (Better Auth varsayılanı) sütun metindir: değer olduğu gibi gider.
+  // If the application generates the id (Better Auth default), the column is text: the value goes through as is.
   const text = await adapterFor();
   await text.adapter.findOne({ model: "user", where: [{ field: "id", value: "not-a-uuid" }] });
   expect(text.sql()).toEqual(['SELECT * FROM "app_x"."user" WHERE "id" = $1 LIMIT 1']);

@@ -1,4 +1,4 @@
-/** Kullanıcı fonksiyonları gerçek PostgreSQL'de: paketin `auth` migration'ı → oluştur/oku/sayfala/sil. */
+/** User functions on real PostgreSQL: the package's `auth` migration → create/read/page/delete. */
 import { expect } from "bun:test";
 import { createUser, deleteUser, findUserByEmail, findUserById, findUsers } from "@0furkancolak/pgcells-single/repositories/users";
 import { migrations, seeds } from "../../core/migrations/registry";
@@ -20,7 +20,7 @@ integration("users: create, find, page in created_at, id order, cascade delete",
     expect(await findUserById(db, ada.id)).toEqual(ada);
     expect(await findUserByEmail(db.read, ada.email)).toEqual(ada);
 
-    // Tek deyimde aynı `now()` ile, id sırasının tersine eklenen iki satır: sırayı yalnızca `, id` belirler.
+    // Two rows inserted in one statement with the same `now()`, in reverse id order: only `, id` decides the order.
     await admin.query(`INSERT INTO ${q(schema, "users")} (id, name, email) VALUES ($1, 'B', $2), ($3, 'C', $4)`, [LAST, email(), FIRST, email()]);
     const ids = [ada.id, FIRST, LAST];
     expect((await findUsers(db)).map((u) => u.id)).toEqual(ids);

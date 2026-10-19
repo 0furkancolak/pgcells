@@ -1,5 +1,5 @@
-/** Demo sıfırlama tekrar denemesi: `maintenance`'ta yarım kalmış bir sıfırlamadan sonra bile her çağrı, yıkıcı SQL'den önce placement
- * geçersiz kılar ve `placementCacheWaitMs`'in tamamını bekler. */
+/** Demo reset retry: even after a reset left half-done in `maintenance`, every call invalidates the placement before the destructive SQL
+ * and waits the full `placementCacheWaitMs`. */
 import { afterAll, beforeAll, expect } from "bun:test";
 import { createManagement, type Management } from "../../core/management";
 import { bootstrap, provisionTenant, resetDemoTenant } from "../../management";
@@ -8,7 +8,7 @@ import { directConfig, driver, enabled, integration, q, removeTenants } from "./
 const WAIT_MS = 1500;
 const tenantId = `reset-${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
 let app: Management;
-/** Her `onPlacementChange` çağrısının anı; `onChange` testin o anda yapacağı iş. */
+/** The moment of each `onPlacementChange` call; `onChange` is the work the test does at that moment. */
 const changes: number[] = [];
 let onChange: (() => void) | undefined;
 
@@ -41,7 +41,7 @@ integration("an interrupted demo reset leaves maintenance; the retry still inval
   await db.exec(`CREATE TABLE ${marker} (id integer)`);
   const markerExists = async () => (await db.query<{ exists: boolean }>("SELECT pg_catalog.to_regclass($1) IS NOT NULL AS exists", [marker]))[0]?.exists === true;
 
-  // 1) İlk sıfırlama placement `maintenance` olur olmaz (önbellek beklemesinde) kesilir.
+  // 1) The first reset is cut as soon as the placement becomes `maintenance` (during the cache wait).
   const controller = new AbortController();
   onChange = () => controller.abort();
   const first = resetDemoTenant(app, tenantId, { signal: controller.signal });
@@ -50,7 +50,7 @@ integration("an interrupted demo reset leaves maintenance; the retry still inval
   expect(await app.platform.get(tenantId)).toMatchObject({ status: "maintenance", schemaVersion: provisioned.schemaVersion });
   expect(await markerExists()).toBe(true);
 
-  // 2) Tekrar deneme: placement zaten `maintenance`; yine de geçersiz kılar ve beklemenin tamamı bitmeden hiçbir şey düşmez.
+  // 2) Retry: the placement is already `maintenance`; it still invalidates, and nothing is dropped before the whole wait is over.
   changes.length = 0;
   const started = performance.now();
   const retry = resetDemoTenant(app, tenantId);
@@ -64,9 +64,9 @@ integration("an interrupted demo reset leaves maintenance; the retry still inval
   const reset = await retry;
   const invalidatedAt = changes[0] ?? Number.POSITIVE_INFINITY;
   expect(changes.length).toBeGreaterThan(0);
-  // Tablo, geçersiz kılmadan en az WAIT_MS sonra hâlâ vardı (düşürme bekleme bitince oldu).
+  // The table was still there at least WAIT_MS after the invalidation (the drop happened once the wait ended).
   expect(lastSeen - invalidatedAt).toBeGreaterThanOrEqual(WAIT_MS - 40);
-  // schema_version=0 da bekleme bitmeden yazılmadı.
+  // schema_version=0 was not written before the wait ended either.
   expect(versions.filter((read) => read.at < invalidatedAt + WAIT_MS - 40 && read.schemaVersion === 0)).toEqual([]);
   expect(reset).toMatchObject({ tenantId, status: "active" });
   expect(await markerExists()).toBe(false);
@@ -76,7 +76,7 @@ integration("demo reset refuses a maintenance placement owned by an unfinished m
   const id = `${tenantId}-mv`;
   const provisioned = await provisionTenant(app, id, "db0", { demo: true });
   const users = `${q(provisioned.schemaName)}.${q("users")}`;
-  // Başarısız taşımanın bıraktığı durum: hedefte `maintenance`, sahibi taşıma kaydı.
+  // State left by a failed move: `maintenance` on the target, owned by the move record.
   await app.pools.platform.query("UPDATE platform.placements SET status='maintenance',move_operation_id=$1 WHERE tenant_id=$2", [crypto.randomUUID(), id]);
   try {
     await expect(resetDemoTenant(app, id)).rejects.toMatchObject({ code: "TENANT_UNAVAILABLE" });

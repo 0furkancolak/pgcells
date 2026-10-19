@@ -8,7 +8,7 @@ afterEach(() => {
   globalThis.clearTimeout = realClear;
 });
 
-/** İçeride kurulan zamanlayıcılardan hâlâ bekleyenlerin sayısı (süresi dolan ya da temizlenen bekleyen sayılmaz). */
+/** Number of timers set up inside that are still pending (expired or cleared ones are not counted). */
 function trackTimers() {
   const pending = new Set<unknown>();
   globalThis.setTimeout = ((handler: () => void, ms?: number) => {

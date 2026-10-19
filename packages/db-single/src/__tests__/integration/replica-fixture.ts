@@ -1,5 +1,5 @@
-/** Replica testleri: izole compose'taki akış replikasyonlu çift (`postgres-rp` → `postgres-rp-replica`). Sabit yerel varsayılanlar,
- * ortam değişkeni yok. Runtime `pooler: "assumed"` ile doğrudan URL'lere bağlanır. */
+/** Replica tests: the streaming-replication pair in the isolated compose (`postgres-rp` → `postgres-rp-replica`). Fixed local defaults,
+ * no environment variables. The runtime connects to the direct URLs with `pooler: "assumed"`. */
 import { createConfig } from "../../core/config";
 import type { Connection } from "../../core/driver";
 import { createDb, type Db, type DbOptions } from "../../core/runtime";
@@ -8,12 +8,12 @@ import { driver, dropSchema, q, raw, testSchema } from "./helpers";
 
 export const PRIMARY_URL = "postgres://admin:local_admin_password@127.0.0.1:5565/app";
 export const REPLICA_URL = "postgres://admin:local_admin_password@127.0.0.1:5566/app";
-/** Dinleyen kimse yok: bağlantı reddedilir. */
+/** Nobody is listening: the connection is refused. */
 export const DEAD_REPLICA_URL = "postgres://admin:local_admin_password@127.0.0.1:5599/app";
 
 export const replicaConfig = (...replicas: string[]) => createConfig(PRIMARY_URL, replicas);
 
-/** Replica, primary'nin şu anki WAL konumunu replay edene kadar bekler. */
+/** Waits until the replica has replayed the primary's current WAL position. */
 export async function caughtUp(primary: Connection, replica: Connection, timeoutMs = 15_000) {
   const [position] = await primary.query<{ lsn: string }>("SELECT pg_catalog.pg_current_wal_lsn()::text AS lsn");
   const deadline = Date.now() + timeoutMs;
@@ -27,7 +27,7 @@ export async function caughtUp(primary: Connection, replica: Connection, timeout
 export const pauseReplay = (replica: Connection) => replica.exec("SELECT pg_catalog.pg_wal_replay_pause()");
 export const resumeReplay = (replica: Connection) => replica.exec("SELECT pg_catalog.pg_wal_replay_resume()");
 
-/** Primary'de `notes` tablosu olan bir schema; replica yetişmiş. `runtime(replicas, options)` replica'lı `Db` açar. */
+/** A schema with a `notes` table on the primary; the replica has caught up. `runtime(replicas, options)` opens a `Db` with replicas. */
 export async function replicaFixture() {
   const schema = testSchema();
   const primary = raw(PRIMARY_URL);

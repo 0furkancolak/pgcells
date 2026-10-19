@@ -1,4 +1,4 @@
-/** Birim testleri için sürücü: her havuzu ve komutu kaydeder; transaction komutları (BEGIN/COMMIT/ROLLBACK) handler'a gitmez. */
+/** Driver for unit tests: records every pool and command; transaction commands (BEGIN/COMMIT/ROLLBACK) do not reach the handler. */
 import type { Connection, Driver, PoolOptions } from "../../core/driver";
 
 export type Handler = (text: string, params: readonly unknown[], pool: FakePool) => unknown[] | Promise<unknown[]>;
@@ -8,7 +8,7 @@ export interface FakePool {
   options: PoolOptions;
   closed: boolean;
   released: number;
-  /** `release(true)` ile atılan bağlantılar (`released`'e de sayılır). */
+  /** Connections discarded with `release(true)` (also counted in `released`). */
   discarded: number;
   cancels: number;
 }

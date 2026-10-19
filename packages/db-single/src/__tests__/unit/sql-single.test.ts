@@ -5,7 +5,7 @@ import { defineQuery, isPreparedQuery } from "../../core/sql/query";
 test("a prepared query has no scope and binds to whatever valid schema it is given", () => {
   const query = prepareQuery("SELECT id FROM users");
   expect(Object.keys(query).sort()).toEqual(["bind", "readOnly", "requiresTransaction"]);
-  // Derleyici yalnızca schema'yı tırnaklar; tablo adı olduğu gibi kalır (`"schema".tablo`).
+  // The compiler only quotes the schema; the table name stays as is (`"schema".table`).
   expect(query.bind("public")).toBe('SELECT id FROM "public".users');
   expect(query.bind("app_1")).toBe('SELECT id FROM "app_1".users');
 });

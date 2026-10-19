@@ -13,10 +13,10 @@ integration("read.query is served by the replica; the request scope sees its own
     const db = f.runtime();
     await pauseReplay(f.replica);
     await db.query(insert, [1]);
-    expect(await db.read.query(count)).toEqual([{ n: 0 }]); // replay duraklatıldı: replica eski veriyi gösterir
+    expect(await db.read.query(count)).toEqual([{ n: 0 }]); // replay paused: the replica shows the old data
     const scope = createDbScope(db);
     await scope.query(insert, [2]);
-    expect(await scope.read.query(count)).toEqual([{ n: 2 }]); // aynı istekte yazıdan sonra okuma primary'de
+    expect(await scope.read.query(count)).toEqual([{ n: 2 }]); // within the same request, a read after a write goes to the primary
     await resumeReplay(f.replica);
     await caughtUp(f.primary, f.replica);
     expect(await db.read.query(count)).toEqual([{ n: 2 }]);

@@ -1,5 +1,5 @@
-/** Entegrasyon yardımcıları. Belgelenen tek env `DATABASE_URLS` (doğrudan URL'ler); testler ayrıca `DB_DRIVER=bun|postgres|pg`
- * ve isteğe bağlı `TEST_POOLED_URLS` (PgBouncer transaction pooling; yoksa yerel compose alias'ları) okur. */
+/** Integration helpers. The only documented env is `DATABASE_URLS` (direct URLs); tests also read `DB_DRIVER=bun|postgres|pg`
+ * and optionally `TEST_POOLED_URLS` (PgBouncer transaction pooling; otherwise the local compose aliases). */
 import { expect, test } from "bun:test";
 import { neonConfig } from "@neondatabase/serverless";
 import { cp, mkdtemp, rm } from "node:fs/promises";
@@ -22,8 +22,8 @@ import { createDatabase } from "../../index";
 export const enabled = process.env.RUN_INTEGRATION === "1";
 export const integration = enabled ? test : test.skip;
 
-// Yerel wsproxy (compose `wsproxy`): Neon istemcisi `host:port` yerine yerel proxy'ye WebSocket açar; proxy ana makinenin Postgres/PgBouncer
-// portlarına iletir. Gerçek Neon'a karşı çalışma `verify:provider --driver neon`'dur.
+// Local wsproxy (compose `wsproxy`): the Neon client opens a WebSocket to the local proxy instead of `host:port`; the proxy forwards to the host's Postgres/PgBouncer
+// ports. Running against real Neon is `verify:provider --driver neon`.
 neonConfig.useSecureWebSocket = false;
 neonConfig.pipelineConnect = false;
 neonConfig.wsProxy = (host, port) => `127.0.0.1:5488/v1?address=${["127.0.0.1", "localhost"].includes(host) ? "host.docker.internal" : host}:${port}`;
@@ -32,7 +32,7 @@ export const drivers: Record<string, Driver> = { bun: bunDriver, postgres: postg
 const name = process.env.DB_DRIVER ?? "bun";
 if (!drivers[name]) throw new Error(`Unknown DB_DRIVER: ${name}`);
 export const driver = drivers[name] as Driver;
-/** CLI yönetim aracıdır: Neon (yalnızca runtime) için Bun SQL kullanır. (`packageCopy`'nin `name` parametresi bu dosyadaki `name`'i gölgeler.) */
+/** The CLI is a management tool: it uses Bun SQL for Neon (runtime only). (`packageCopy`'s `name` parameter shadows the `name` in this file.) */
 const cliDriver = name === "neon" ? "bun" : name;
 
 /** Direct URLs for management and fixtures. */
@@ -75,14 +75,14 @@ export function raw(index = 0, url = directConfig().nodes[index]?.url, max = 2) 
 export const q = (schema: string, name?: string) =>
   name === undefined ? quoteIdentifier(schema) : `${quoteIdentifier(schema)}.${quoteIdentifier(name)}`;
 
-/** Tenant veri testlerinin sorguları: örnek tablolar yok, her tenant'ta Better Auth `users` tablosu var (id veritabanında üretilir). */
+/** Queries for tenant data tests: no sample tables, every tenant has the Better Auth `users` table (id is generated in the database). */
 export const createUser = prepareQuery("INSERT INTO users (id, name, email) VALUES ($1::uuid, $2, $3) RETURNING id::text AS id, name");
 export const listUsers = prepareQuery("SELECT id::text AS id, name FROM users ORDER BY created_at, id LIMIT $1::integer OFFSET $2::integer");
-/** `users.email` tekildir: her satıra ayrı adres. */
+/** `users.email` is unique: a separate address per row. */
 export const uniqueEmail = () => `${crypto.randomUUID()}@example.com`;
 
-/** Paketin geçici kopyası (testler hariç; `packages/db-multi` altında, bağımlılıklar çözülür). Test-yerel migration ve seed kaynakları
- * buraya yazılır; `codegen` sonrası kopyanın CLI'si ve modülleri kendi registry'siyle çalışır, bu sürecin registry'si değişmez. */
+/** A temporary copy of the package (without tests; under `packages/db-multi` so dependencies resolve). Test-local migration and seed sources
+ * are written there; after `codegen` the copy's CLI and modules run with their own registry, and this process's registry is unchanged. */
 export async function packageCopy(name: string) {
   const root = await mkdtemp(join(import.meta.dir, `../../../.tmp-${name}-`));
   await cp(join(import.meta.dir, "../.."), join(root, "src"), { recursive: true, filter: (path) => !path.includes("__tests__") });
@@ -90,7 +90,7 @@ export async function packageCopy(name: string) {
     root,
     write: (path: string, source: string) => Bun.write(join(root, path), source),
     codegen: () => writeGenerated(root),
-    /** Kopyada `src/core/cli.ts`; çıkış kodu 0 olmalı, son JSON satırı döner. */
+    /** `src/core/cli.ts` in the copy; the exit code must be 0, the last JSON line is returned. */
     async cli(...args: string[]) {
       const child = Bun.spawn([process.execPath, "src/core/cli.ts", ...args, `--driver=${cliDriver}`], {
         cwd: root,
@@ -102,13 +102,13 @@ export async function packageCopy(name: string) {
       expect(code, `${args.join(" ")}: ${stderr}`).toBe(0);
       return JSON.parse(stdout.split(/\n(?=\{)/).at(-1) ?? "");
     },
-    /** Kopyanın yönetim girişi: ayrı modül grafiği, dolayısıyla ayrı (test-yerel kaynakları içeren) registry. */
+    /** The copy's management entry: a separate module graph, hence a separate registry (with the test-local sources). */
     management: () => import(join(root, "src/management.ts")) as Promise<typeof ManagementModule>,
     remove: () => rm(root, { recursive: true, force: true }),
   };
 }
 
-/** Başka bir registry ile (paket kopyası) kurulmuş tenant'ı iz bırakmadan siler: sonraki migrate-all drift görmesin. */
+/** Deletes a tenant set up with another registry (a package copy) without a trace, so the next migrate-all sees no drift. */
 export async function forgetTenant(m: Management, tenantId: string) {
   for (const node of m.config.nodes) await m.pools.node(node.id).exec(`DROP SCHEMA IF EXISTS ${q(tenantSchema(tenantId))} CASCADE`);
   await m.pools.platform.query("DELETE FROM platform.placements WHERE tenant_id=$1", [tenantId]);
@@ -124,8 +124,8 @@ const TENANT_CLEANUP = [
 const SCHEMAS_BY_PREFIX =
   "SELECT nspname AS name FROM pg_catalog.pg_namespace WHERE EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements_text($1::text::jsonb) AS p(v) WHERE nspname=p.v OR pg_catalog.starts_with(nspname, p.v || '_'))";
 
-/** Bu çalıştırmanın tenant'larını paylaşılan DB'lerden siler (`leak-guard.ts` kalanı yakalar). Her `prefix` tam ID'yi ve `prefix-…`
- * ID'lerini kapsar: taşıma kayıtları, placement ve tenant satırları, her node'daki tenant ve demo schema'ları. */
+/** Deletes this run's tenants from the shared DBs (`leak-guard.ts` catches the rest). Each `prefix` covers the exact ID and `prefix-…`
+ * IDs: move records, placement and tenant rows, tenant and demo schemas on every node. */
 export async function removeTenants(m: Management, ...prefixes: string[]) {
   const ids = [JSON.stringify(prefixes)];
   await m.pools.platform.transaction(async (tx) => {

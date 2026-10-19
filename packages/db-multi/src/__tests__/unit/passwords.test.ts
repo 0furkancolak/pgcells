@@ -1,4 +1,4 @@
-/** Aktarılmış parola hash'leri: tür sınıflandırması (hangi runtime'da doğrulanabilir) ve Bun dışı bcrypt doğrulaması. */
+/** Imported password hashes: type classification (which runtime can verify them) and non-Bun bcrypt verification. */
 import { expect, test } from "bun:test";
 import { compare } from "bcryptjs";
 import { hashPassword } from "better-auth/crypto";

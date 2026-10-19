@@ -1,6 +1,6 @@
-/** `bootstrap --mark-applied`: pull edilmiş platform migration'ı yalnızca kaynak schema'nın bugünkü kataloğu migration'ın yapı özetiyle
- * aynıysa işaretlenir; kaynak verilmezse, schema farklıysa ya da değiştiyse hiçbir şey yazılmadan reddedilir. Paket kopyası (ayrı
- * registry) ve bu teste özel bir DB kullanır: ortak test DB'lerinin ledger'ı değişmez. */
+/** `bootstrap --mark-applied`: a pulled platform migration is marked only if the source schema's current catalog matches the migration's structure digest;
+ * if no source is given, the schema differs or has changed, it is refused without writing anything. Uses a package copy (separate
+ * registry) and a DB specific to this test: the shared test DBs' ledger does not change. */
 import { afterAll, beforeAll, expect } from "bun:test";
 import { createConfig } from "../../core/config";
 import type { Database } from "../../core/database";
@@ -11,7 +11,7 @@ let admin: Database | undefined;
 let copy: Awaited<ReturnType<typeof packageCopy>> | undefined;
 let url = "";
 
-/** CREATE/DROP DATABASE transaction'da çalışamaz: bootstrap'ın runtime statement_timeout'u olmadan ayrılmış oturum. */
+/** CREATE/DROP DATABASE cannot run in a transaction: a reserved session without bootstrap's runtime statement_timeout. */
 async function outsideTimeout(db: Database, sql: string) {
   const connection = await db.pool.reserve();
   try {
@@ -63,13 +63,13 @@ integration("mark-applied requires the source schema and refuses a different or 
       expect(await failure(bootstrap(m, { markApplied: [pulled.id], fromSchema: "missing" }))).toBe("SOURCE_SCHEMA_MISSING");
       await db.exec("ALTER TABLE panel.admins ADD COLUMN name text");
       expect(await failure(bootstrap(m, { markApplied: [pulled.id], fromSchema: "panel" }))).toBe("SCHEMA_DRIFT");
-      expect(await ledgerExists()).toBe(false); // reddedilen hiçbir çağrı ledger'a (ya da platform'a) yazmadı
+      expect(await ledgerExists()).toBe(false); // no refused call wrote to the ledger (or to platform)
 
       await db.exec("ALTER TABLE panel.admins DROP COLUMN name");
       const result = await bootstrap(m, { markApplied: [pulled.id], fromSchema: "panel" });
       expect(result.markedApplied).toEqual([pulled.id]);
       expect(await db.query("SELECT id FROM platform._migrations WHERE id=$1", [pulled.id])).toHaveLength(1);
-      // İşaretlenen migration çalıştırılmadı: tablosu platform'da yok (başka bir araç getirir).
+      // The marked migration was not run: its table does not exist in platform (another tool brings it).
       expect(await db.query<{ absent: boolean }>("SELECT pg_catalog.to_regclass('platform.admins') IS NULL AS absent")).toEqual([{ absent: true }]);
     } finally {
       await m.close();

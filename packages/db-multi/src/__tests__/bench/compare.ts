@@ -1,10 +1,10 @@
-/** Hızlı karşılaştırma (`bun src/__tests__/bench/compare.ts`): tek küçük kümede paket ile aynı sürücünün doğrudan kullanımı ("normal":
- * elle yazılmış şema nitelikli SQL, tenant yönlendirmesi yok), ayrıca her yönetim adımının ne kadar sürdüğü.
- *  management  bootstrap, provision (tenant, demo), migrate/seed no-op'ları, son tenant migration'ının rollback + yeniden uygulanması, `users` satır yüklemeleri
- *  inProcess   sürücü başına, host → PgBouncer, sıralı: tenantFromHost, placement okuması, ilk/ikinci tenant erişimi,
- *              nokta okuması ve insert transaction (normal ve paket, dönüşümlü), ORDER BY düzeltmesi öncesi/sonrası `users` sayfası
- *  http        tier ve sürücü başına, k6 → düzenek uygulaması (2 CPU / 512 MB): 64 VU ile azami throughput ve 200 rps'de gecikme;
- *              /health, normal ve paket nokta okumaları ile insert transaction'ları */
+/** Quick comparison (`bun src/__tests__/bench/compare.ts`): on one small cluster, the package vs direct use of the same driver ("normal":
+ * hand-written schema-qualified SQL, no tenant routing), plus how long each management step takes.
+ *  management  bootstrap, provision (tenant, demo), migrate/seed no-ops, rollback + re-apply of the last tenant migration, `users` row loads
+ *  inProcess   per driver, host → PgBouncer, sequential: tenantFromHost, placement read, first/second tenant access,
+ *              point read and insert transaction (normal and package, alternating), `users` page before/after the ORDER BY fix
+ *  http        per tier and driver, k6 → harness app (2 CPU / 512 MB): peak throughput with 64 VUs and latency at 200 rps;
+ *              /health, normal and package point reads, and insert transactions */
 import { parseArgs } from "node:util";
 import { createConfig, createDatabase, tenantFromHost } from "@0furkancolak/pgcells";
 import { bunDriver } from "@0furkancolak/pgcells/drivers/bun";
@@ -40,7 +40,7 @@ const run = `compare-${stamp()}`;
 const file = `${RESULTS_DIR}/${run}.json`;
 
 const rand = (n: number) => Math.floor(Math.random() * n);
-/** Geçerli adım; hatayla birlikte kaydedilir, böylece bir sürücünün hatası diğerlerini durdurmaz. */
+/** Current step; recorded together with the error, so one driver's failure does not stop the others. */
 let stage = "";
 const failed = (error: unknown) => ({ error: String(error), code: (error as { code?: string }).code, stage });
 const result: Record<string, unknown> = {

@@ -20,7 +20,7 @@ const healthy = (text: string) => {
 
 test("replicaReport lists each replica by number with its lag, and opens and closes its own pools", async () => {
   const { app, fake } = open(healthy);
-  const opened = fake.pools.length; // yönetimin kendi platform havuzu `app.close()`'a kadar açık kalır
+  const opened = fake.pools.length; // the management's own platform pool stays open until `app.close()`
   const report = await replicaReport(app);
   expect(report).toEqual({
     ok: true,

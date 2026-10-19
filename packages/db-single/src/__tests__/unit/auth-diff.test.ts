@@ -1,4 +1,4 @@
-/** `authSchemaDiff`: var olan alanların eksik index ve tekillik kısıtları da fark sayılır (sahte `information_schema` / `pg_index` yanıtlarıyla). */
+/** `authSchemaDiff`: missing indexes and uniqueness constraints on existing fields also count as differences (with fake `information_schema` / `pg_index` responses). */
 import { expect, test } from "bun:test";
 import { getSchema } from "better-auth/db";
 import authOptions from "../fixtures/auth-options";
@@ -10,17 +10,17 @@ import { fakeDriver } from "../fixtures/fake-driver";
 type IndexRow = { table: string; name: string; column: string; unique: boolean; valid: boolean };
 
 const TYPES: Record<string, string> = { boolean: "boolean", date: "timestamp with time zone", number: "integer" };
-/** Better Auth'un beklediği her tablo ve sütun, alanın tipiyle. */
+/** Every table and column Better Auth expects, with the field's type. */
 const columns = Object.entries(getSchema(authOptions as never)).flatMap(([table, value]) => [
   { table, column: "id", type: "uuid" },
   ...Object.entries(value.fields).map(([column, field]) => ({ table, column, type: TYPES[field.type as string] ?? "text" })),
 ]);
-/** Index satırlarını test verir. */
+/** The test supplies the index rows. */
 function fakeDb(indexes: IndexRow[]) {
   return { db: { query: async (text: string) => (text.includes("information_schema") ? columns : indexes) } } as never;
 }
 
-/** Better Auth'un işaretlediği bütün tekil / index alanlarının karşılığı. */
+/** Counterpart of every unique / indexed field Better Auth marks. */
 const complete: IndexRow[] = [
   { table: "users", name: "users_email_unique", column: "email", unique: true, valid: true },
   { table: "session", name: "session_token_unique", column: "token", unique: true, valid: true },
@@ -42,15 +42,15 @@ test("a missing index or unique constraint on an existing column is a difference
   expect(index.sql).toBe('create index "session_user_id_idx" on "session" ("user_id");');
   const unique = await authSchemaDiff(fakeDb(without("users_email_unique")), authOptions, { schema: "app_x" });
   expect(unique.sql).toBe('create unique index "users_email_uidx" on "users" ("email");');
-  // Geçersiz (ya da kısmi) index karşılık sayılmaz; üretilecek adı zaten taşıyorsa migration o adla çakışırdı: INVALID_CONFIG, adıyla.
+  // An invalid (or partial) index does not count as a match; if it already carries the name to be generated, the migration would collide with it: INVALID_CONFIG, by name.
   await expect(authSchemaDiff(fakeDb(complete.map((row) => (row.name === "account_user_id_idx" ? { ...row, valid: false } : row))), authOptions, { schema: "app_x" })).rejects.toMatchObject({
     code: "INVALID_CONFIG",
     message: expect.stringContaining('"account_user_id_idx"'),
   });
-  // Index adları schema genelinde tekildir: üretilecek ad başka tablonun index'indeyse de çakışırdı.
+  // Index names are unique schema-wide: it would also collide if the name to be generated belongs to another table's index.
   const elsewhere = [...without("session_user_id_idx"), { table: "verification", name: "session_user_id_idx", column: "identifier", unique: false, valid: true }];
   await expect(authSchemaDiff(fakeDb(elsewhere), authOptions, { schema: "app_x" })).rejects.toMatchObject({ code: "INVALID_CONFIG" });
-  // Tekil alan tekil olmayan index'le karşılanmaz.
+  // A unique field is not satisfied by a non-unique index.
   expect((await authSchemaDiff(fakeDb(complete.map((row) => (row.name === "users_email_unique" ? { ...row, unique: false } : row))), authOptions, { schema: "app_x" })).sql).toContain('"users_email_uidx"');
 });
 

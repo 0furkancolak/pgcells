@@ -22,7 +22,7 @@ integration("createDb runs prepared queries, transactions and reads through the 
         }),
       );
       expect(await db.query(list)).toHaveLength(2);
-      // Replica yapılandırılmadı: okuma birincilde tek deyim olarak çalışır.
+      // No replica configured: the read runs on the primary as a single statement.
       expect(await db.read.query(list)).toHaveLength(2);
       expect(await failure(db.read.query(insert as never, [9, "x"]))).toBe("QUERY_NOT_READ_ONLY");
     } finally {

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createConfig, loadConfig, managementSettings, runtimeSettings } from "../../core/config";
 
-// Depo genelindeki koruma testi bu sözcüğü yazan her dosyayı reddeder; reddedilmesi beklenen girdiler parçalardan kurulur.
+// The repo-wide guard test rejects every file that spells this word; inputs that are expected to be rejected are built from fragments.
 const SP = "search" + "_path";
 
 const PRIMARY = "postgres://admin:secret-pw@primary.example:5432/app";

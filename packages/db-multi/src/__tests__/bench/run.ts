@@ -1,11 +1,11 @@
-/** Yük benchmark'ı (`bun run bench`). PostgreSQL (tier limitleri), PgBouncer ve düzenek uygulaması (server.ts) Docker'da; k6
- * host'ta çalışır. Fazlar (`--phase setup,matrix,repeat,extra,soak`):
- *  setup   provisionTenant ile db0/db1 üzerinde 10.000 tenant (+ demo tenant'lar, büyük tenant); satırlar sunucu tarafında üretilir
- *  matrix  sürücüler × tier'lar × {point, mixed}: art arda iki rung SLO'yu kaçırana kadar 15 s ramping-arrival-rate rung'ları
- *  repeat  T2/T4 × en hızlı sürücü × {point, mixed}, `--repeats` kez daha (varyans)
- *  extra   T2/T4 × en hızlı sürücü: hotpoint, range, insert ve auth ladder'ları ve 10× spike
- *  soak    T2 × en hızlı sürücü: `--soak-minutes` boyunca azami değerinin %50'sinde mixed
- * Toplu sonuçlar (`--run <id>` ile sürdürülebilir): results/<id>-load.json. Ham k6 özetleri ve örnekler: $BENCH_RAW_DIR/<id>/. */
+/** Load benchmark (`bun run bench`). PostgreSQL (tier limits), PgBouncer and the harness app (server.ts) run in Docker; k6
+ * runs on the host. Phases (`--phase setup,matrix,repeat,extra,soak`):
+ *  setup   10,000 tenants on db0/db1 via provisionTenant (+ demo tenants, big tenant); rows are generated server-side
+ *  matrix  drivers × tiers × {point, mixed}: 15 s ramping-arrival-rate rungs until two consecutive rungs miss the SLO
+ *  repeat  T2/T4 × fastest driver × {point, mixed}, `--repeats` more times (variance)
+ *  extra   T2/T4 × fastest driver: hotpoint, range, insert and auth ladders and a 10× spike
+ *  soak    T2 × fastest driver: mixed at 50% of its maximum for `--soak-minutes`
+ * Aggregate results (resumable with `--run <id>`): results/<id>-load.json. Raw k6 summaries and samples: $BENCH_RAW_DIR/<id>/. */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
@@ -47,7 +47,7 @@ const BIG_TENANT = "big";
 const BIG_USERS = Number(flags["big-rows"]);
 const DEMO_TENANTS = Number(flags["demo-tenants"]);
 const STEP_S = Number(flags["step-seconds"]);
-/** Warm-up: tier'a özgü hızda 15 s pencereler; art arda 3 pencere SLO'yu max/min p95 ≤ 1.3 ile (ya da tüm p95 < 10 ms) geçene kadar. */
+/** Warm-up: 15 s windows at a tier-specific rate; until 3 consecutive windows pass the SLO with max/min p95 ≤ 1.3 (or all p95 < 10 ms). */
 const WARMUP = {
   rps: { T1: 20, T2: 50, T3: 100, T4: 150 } as Record<TierName, number>, windowSeconds: 15, stableWindows: 3, maxP95Ratio: 1.3,
   maxSeconds: Number(flags["warmup-max-seconds"]), cellMaxSeconds: 90, method: "v2",
@@ -95,7 +95,7 @@ interface LoadResult {
   setup?: Record<string, unknown>;
   cells: Record<string, Cell>;
   failures: { key: string; error: string; at: string }[];
-  /** Toplamdan çıkarılıp yeniden koşulan hücreler ve nedeni (dürüstlük için saklanır). */
+  /** Cells removed from the totals and re-run, with the reason (kept for transparency). */
   discarded?: (Cell & { discardReason: string })[];
   notes: string[];
   summary?: ReturnType<typeof summarize>;
@@ -120,9 +120,9 @@ const save = () => {
   saveResult(file, result);
 };
 
-// ---- Yığın --------------------------------------------------------------------
+// ---- Stack --------------------------------------------------------------------
 
-/** `warm`: bu yığında stabilite warm-up'ı geçildiğinde "<tier>/<driver>" (herhangi bir yeniden başlatma sıfırlar). */
+/** `warm`: "<tier>/<driver>" once the stability warm-up has passed on this stack (any restart resets it). */
 let stack: { tier?: TierName; driver?: string; warm?: string } = {};
 const psqlReady = () => {
   try {
@@ -132,7 +132,7 @@ const psqlReady = () => {
     return false;
   }
 };
-/** Çökmüş bir backend (başlangıçtan beri cgroup oom_kill > 0) ya da hâlâ recovery'deki sunucu sonraki hücreyi kirletir: yeniden başlat. */
+/** A crashed backend (cgroup oom_kill > 0 since start) or a server still in recovery would contaminate the next cell: restart. */
 function pgNeedsRestart() {
   if (containerState(NAMES.pg)?.status !== "running") return "not running";
   if ((oomKills(NAMES.pg) ?? 0) > 0) return `oom_kill=${oomKills(NAMES.pg)} since start`;
@@ -167,7 +167,7 @@ function unhealthy() {
 }
 
 let cookies: { host: string; cookie: string }[] | undefined;
-/** Demo tenant başına bir kez oturum açar (Better Auth parola hash'i); k6 sonra yalnızca oturumları kontrol eder. */
+/** Signs in once per demo tenant (Better Auth password hash); k6 then only checks sessions. */
 async function demoCookies() {
   if (cookies) return cookies;
   const signedIn: { host: string; cookie: string }[] = [];
@@ -203,7 +203,7 @@ function delta(before: Awaited<ReturnType<typeof snapshot>>, after: Awaited<Retu
   };
 }
 
-// ---- Hücreler ----------------------------------------------------------------------
+// ---- Cells -------------------------------------------------------------------------
 
 type Samplers = { stats: ReturnType<typeof startStats>; pools: ReturnType<typeof startPoolPoller> };
 type Body = (cell: Cell, env: Record<string, string | number>, raw: string, samplers: Samplers) => Promise<void>;
@@ -236,7 +236,7 @@ async function runCell(phase: string, tier: TierName, driver: string, scenario: 
   save();
 }
 
-/** Yığını hazırlar, k6 env'ini kurar ve (cold dışında) warm-up'ları koşar; env'i döner. */
+/** Prepares the stack, sets up the k6 env and (except cold) runs the warm-ups; returns the env. */
 async function prepareCell(cell: Cell, op: string, raw: string) {
   const { tier, driver, scenario } = cell;
   if (scenario === "cold") {
@@ -248,7 +248,7 @@ async function prepareCell(cell: Cell, op: string, raw: string) {
     OP: op, TENANTS, TENANT_USERS, BIG_TENANT, BIG_USERS, ...(op === "auth" && { COOKIES: JSON.stringify(await demoCookies()) }),
   };
   if (scenario !== "cold") {
-    // Yığın+sürücü başına bir kez tüm tenant'lar üzerinde yığın düzeyi warm-up; ardından her hücre için op'a özgü stabilite kontrolü.
+    // Stack-level warm-up over all tenants once per stack+driver; then an op-specific stability check for each cell.
     const warm = `${tier}/${driver}`;
     if (stack.warm !== warm) {
       cell.warmup = { stack: await warmUp(tier, { ...env, OP: "point" }, join(raw, "warm-stack"), WARMUP.maxSeconds) };
@@ -259,7 +259,7 @@ async function prepareCell(cell: Cell, op: string, raw: string) {
   return env;
 }
 
-/** Üst rung PostgreSQL'i çökertebilir (OOM); ladder'ı kaybetmemek için kapanış istatistiklerinden önce recovery beklenir. */
+/** A top rung can crash PostgreSQL (OOM); to avoid losing the ladder, recovery is awaited before the closing stats. */
 async function closingDelta(cell: Cell, before: Awaited<ReturnType<typeof snapshot>>) {
   for (let i = 0; i < 120 && !psqlReady(); i++) await Bun.sleep(1000);
   try {
@@ -269,12 +269,12 @@ async function closingDelta(cell: Cell, before: Awaited<ReturnType<typeof snapsh
   }
 }
 
-/** Örnekleyicileri durdurup yazar, konteyner loglarını toplar; uygulama çöktüyse nedeni hücre notlarına eklenir. */
+/** Stops and writes the samplers, collects container logs; if the app crashed, the cause is added to the cell notes. */
 function closeCell(cell: Cell, raw: string, samplers: Samplers | undefined) {
   samplers?.stats.stop();
   samplers?.pools.stop();
   if (samplers) writeFileSync(join(raw, "samples.json"), JSON.stringify({ stats: samplers.stats.samples, pools: samplers.pools.rows }));
-  // Konteyner logları sonraki hücrenin yeniden başlatmasından sağ çıkar; uygulama çökme nedeni sonuca yazılır.
+  // Container logs survive the next cell's restart; the app crash cause is written to the result.
   for (const name of [NAMES.app, NAMES.pg, NAMES.bouncer]) {
     const logs = sh(["docker", "logs", "--since", cell.startedAt, name], { allowFail: true });
     writeFileSync(join(raw, `${name}.log`), `${logs.out}\n${logs.err}`);
@@ -287,7 +287,7 @@ function closeCell(cell: Cell, raw: string, samplers: Samplers | undefined) {
   }
 }
 
-/** Art arda iki kaçırmaya kadar LADDER rung'ları; SLO'da azami = ilk kaçırmadan önceki rung. */
+/** LADDER rungs until two consecutive misses; max at SLO = the rung before the first miss. */
 const ladder: Body = async (cell, env, raw, { stats, pools }) => {
   let previous = LADDER[0] as number;
   let misses = 0;
@@ -309,8 +309,8 @@ const ladder: Body = async (cell, env, raw, { stats, pools }) => {
   applyLadderMax(cell);
 };
 
-/** SLO'da azami = art arda ilk iki kaçırmadan (durma kuralı) önceki en yüksek geçen rung. Tekil kaçırmalar (ör. soğuk ilk
- * rung) listelenir, kullanılmaz; `firstMissRps` daha katı okumadır. */
+/** Max at SLO = the highest passing rung before the first two consecutive misses (stop rule). Isolated misses (e.g. the cold first
+ * rung) are listed, not used; `firstMissRps` is the stricter reading. */
 function applyLadderMax(cell: Cell) {
   const stages = cell.stages;
   const stop = stages.findIndex((s, i) => !s.pass && stages[i + 1] !== undefined && !stages[i + 1]?.pass);
@@ -325,7 +325,7 @@ function applyLadderMax(cell: Cell) {
   if (cell.ceilingReached) cell.notes.push("ladder: ended without an SLO miss; the true max is higher");
 }
 
-/** Taban hızda 60 s, 10× tabanda 30 s, tabanda 90 s; 5 s pencereler. Toparlanma = sonraki tüm pencerelerin geçtiği ilk "after" penceresi. */
+/** 60 s at the base rate, 30 s at 10× base, 90 s at base; 5 s windows. Recovery = the first "after" window from which all later windows pass. */
 const spike = (base: number): Body => async (cell, env, raw, { stats, pools }) => {
   const plan = [...Array(12).fill([base, 5]), ...Array(6).fill([base * 10, 5]), ...Array(18).fill([base, 5])] as [number, number][];
   const from = Date.now();
@@ -344,7 +344,7 @@ const spike = (base: number): Body => async (cell, env, raw, { stats, pools }) =
   };
 };
 
-/** 60 s pencerelerde sabit mixed yük; uygulama RSS'i her 10 s'de sorgulanır. */
+/** Constant mixed load in 60 s windows; app RSS is polled every 10 s. */
 const soak = (rate: number, minutes: number): Body => async (cell, env, raw, { stats, pools }) => {
   const plan = Array.from({ length: minutes }, () => [rate, 60] as [number, number]);
   const rss: { t: number; rssMiB: number; heapUsedMiB: number }[] = [];
@@ -378,9 +378,9 @@ const soak = (rate: number, minutes: number): Body => async (cell, env, raw, { s
   };
 };
 
-// ---- Kurulum ----------------------------------------------------------------------
+// ---- Setup ------------------------------------------------------------------------
 
-/** Stabil olana (bkz. WARMUP) ya da süre sınırına kadar warm-up pencereleri koşar; olanı döner (süre, pencereler, stable). */
+/** Runs warm-up windows until stable (see WARMUP) or the time limit; returns what happened (duration, windows, stable). */
 async function warmUp(tier: TierName, env: Record<string, string | number>, raw: string, maxSeconds: number) {
   const rate = WARMUP.rps[tier];
   const started = Date.now();
@@ -400,8 +400,8 @@ async function warmUp(tier: TierName, env: Record<string, string | number>, raw:
   return { op: env.OP, rateRps: rate, seconds: round((Date.now() - started) / 1000, 1), stable, windows };
 }
 
-/** Soğuk tenant'lar: PostgreSQL hemen önce yeniden başlatıldı; 15 s pencerelerde 10.000 tenant üzerinde sabit point yükü. İlk
- * erişim cezasını, blok okumalarını ve backend belleğini (sonda üç backend için pg_log_backend_memory_contexts) kaydeder. */
+/** Cold tenants: PostgreSQL was restarted just before; constant point load over 10,000 tenants in 15 s windows. Records the first
+ * access penalty, block reads and backend memory (pg_log_backend_memory_contexts for three backends at the end). */
 const cold = (tier: TierName, minutes: number): Body => async (cell, env, raw, { stats, pools }) => {
   const rate = WARMUP.rps[tier] * 2;
   const plan = Array.from({ length: minutes * 4 }, () => [rate, 15] as [number, number]);
@@ -451,14 +451,14 @@ type Setup = Record<string, unknown>;
 
 async function setupPhase() {
   if (result.setup?.status === "ok") return log("setup already done");
-  // Sürdürülebilir: tamamlanan alt adımlar (sonuç dosyasına kayıtlı) tekrarlanmaz.
+  // Resumable: completed sub-steps (recorded in the result file) are not repeated.
   const setup: Setup = result.setup ?? { status: "failed", startedAt: new Date().toISOString(), tier: "T4", volume: flags.volume, managementDriver: "bun" };
   result.setup = setup;
   stopAll();
   await startPostgres("T4", flags.volume as string);
   stack = { tier: "T4" };
   if (!setup.demoProvision) await provisionTenants(setup);
-  // Satırlar: sunucu tarafında üretim, paket API'sini bilerek atlar (test edilen sorgular API'den geçer).
+  // Rows: server-side generation deliberately bypasses the package API (the tested queries go through the API).
   if (!setup.tenantRows) await loadTenantRows(setup);
   if (!setup.bigTenant) await loadBigTenant(setup);
   await vacuumAndSizes(setup);
@@ -467,14 +467,14 @@ async function setupPhase() {
   save();
 }
 
-/** Paket üzerinden bootstrap, TENANTS tenant, demo tenant'lar ve büyük tenant. */
+/** Bootstrap through the package, TENANTS tenants, demo tenants and the big tenant. */
 async function provisionTenants(setup: Setup) {
   const m = createManagement(createConfig(directUrls()), { driver: bunDriver, perDatabaseConcurrency: 16 });
   try {
     let t = Date.now();
     await bootstrap(m);
     setup.bootstrapMs = Date.now() - t;
-    // Paket üzerinden: placement, şema, migration'lar, install seed'leri, aktivasyon.
+    // Through the package: placement, schema, migrations, install seeds, activation.
     const ids = Array.from({ length: TENANTS }, (_, i) => tenantName(i));
     const concurrency = Number(flags["provision-concurrency"]);
     const retried: Record<string, number> = {};
@@ -499,7 +499,7 @@ async function provisionTenants(setup: Setup) {
   }
 }
 
-/** En fazla 3 deneme; yeniden denenen hatalar koda göre `retried` içinde sayılır. */
+/** At most 3 attempts; retried errors are counted by code in `retried`. */
 async function provisionWithRetry(m: Management, id: string, database: string, retried: Record<string, number>) {
   for (let attempt = 1; ; attempt++) {
     try {
@@ -513,7 +513,7 @@ async function provisionWithRetry(m: Management, id: string, database: string, r
   }
 }
 
-/** Her tenant'a TENANT_USERS kullanıcı; veritabanı başına 2 paralel psql oturumu. */
+/** TENANT_USERS users per tenant; 2 parallel psql sessions per database. */
 async function loadTenantRows(setup: Setup) {
   const t = Date.now();
   const schemas = (db: string) =>
@@ -530,10 +530,10 @@ async function loadTenantRows(setup: Setup) {
   save();
 }
 
-/** Büyük tenant'ı boşaltıp 1M satırlık parçalarla BIG_USERS kullanıcıyla doldurur. */
+/** Empties the big tenant and fills it with BIG_USERS users in 1M-row chunks. */
 async function loadBigTenant(setup: Setup) {
   const big = psql("db0", `SELECT schema_name FROM platform.placements WHERE tenant_id='${BIG_TENANT}'`);
-  // CASCADE: session/account/user_imports users'a FK ile bağlıdır.
+  // CASCADE: session/account/user_imports are tied to users by FK.
   await psqlScript("db1", `TRUNCATE "${big}".users CASCADE;`);
   const t = Date.now();
   for (let from = 1; from <= BIG_USERS; from += 1_000_000) await psqlScript("db1", rowsSql(big, from, Math.min(BIG_USERS, from + 999_999)));
@@ -543,14 +543,14 @@ async function loadBigTenant(setup: Setup) {
   save();
 }
 
-/** İki veritabanında VACUUM (ANALYZE), ardından veritabanı ve disk boyutları. */
+/** VACUUM (ANALYZE) on both databases, then database and disk sizes. */
 async function vacuumAndSizes(setup: Setup) {
   const t = Date.now();
   for (const db of ["db0", "db1"]) {
     try {
       await psqlScript(db, "VACUUM (ANALYZE);");
     } catch (error) {
-      // Kaydedilir, sonra bir kez yeniden denendi (ilk deneme --shm-size=128m ile koşmuştu).
+      // Recorded, then retried once (the first attempt ran with --shm-size=128m).
       result.failures.push({ key: `setup/vacuum/${db}`, error: String(error).slice(0, 400), at: new Date().toISOString() });
       save();
       throw error;
@@ -563,7 +563,7 @@ async function vacuumAndSizes(setup: Setup) {
   };
 }
 
-// ---- Özet ----------------------------------------------------------------------
+// ---- Summary -------------------------------------------------------------------
 
 const cellsOf = (phase: string) => Object.values(result.cells).filter((c) => c.phase === phase && c.status === "ok");
 function maxOf(tier: TierName, driver: string, scenario: string) {
@@ -611,7 +611,7 @@ function summarize() {
   };
 }
 
-// ---- Ana akış -------------------------------------------------------------------------
+// ---- Main flow ------------------------------------------------------------------------
 
 try {
   for (const phase of list(flags.phase)) {
@@ -634,7 +634,7 @@ try {
         await runCell("extra", tier, driver, "spike", "mixed", 0, spike(base));
       }
     } else if (phase === "discard-v1") {
-      // Yöntem v1 (20 s × 25 rps warm-up, PgBouncer LIFO yeniden kullanımı) kapasiteyi değil soğuk tenant erişimini ölçtü: sakla, karıştırma.
+      // Method v1 (20 s × 25 rps warm-up, PgBouncer LIFO reuse) measured cold tenant access, not capacity: keep it, do not mix.
       result.discarded ??= [];
       for (const [key, cell] of Object.entries(result.cells)) {
         result.discarded.push({ ...cell, discardReason: "method v1 superseded: 20 s × 25 rps warm-up and PgBouncer LIFO backend reuse measured mostly cold tenant access (10k schemas) and restart noise; whole matrix re-run with the v2 stability warm-up" });

@@ -1,7 +1,7 @@
-/** `bun run verify:provider [--driver bun|postgres|pg|neon] [--replica]`: yönetilen Postgres'te pooler sınamasını, `ALTER DATABASE SET`'i, yetkileri ve
- * deadline sonrası sunucu davranışını ölçer; `--replica` replica URL'sini gizli girişle sorar ve lag ile standby ayarlarını da ölçer; yalnızca JSON basar.
- * Yönetim URL'si `DATABASE_URLS`'ten, runtime URL'si gizli girişten gelir (`doctor --pooled-url` ile aynı biçim). Yalnızca geçici/ücretsiz test
- * veritabanlarında çalıştırın. */
+/** `bun run verify:provider [--driver bun|postgres|pg|neon] [--replica]`: measures the pooler probe, `ALTER DATABASE SET`, privileges and
+ * server behavior after a deadline on a managed Postgres; `--replica` asks for the replica URL via hidden input and also measures lag and standby settings; prints JSON only.
+ * The management URL comes from `DATABASE_URLS`, the runtime URL from hidden input (same form as `doctor --pooled-url`). Run it only on temporary/free test
+ * databases. */
 import { createConfig, loadConfig } from "../../core/config";
 import type { Driver } from "../../core/driver";
 import { AppError, errorCode } from "../../core/errors";
@@ -57,7 +57,7 @@ async function serverVersion(driver: Driver, url: string): Promise<string | null
   }
 }
 
-/** Ölçümleri sırayla çalıştırır (paralel değil: ölçümler aynı veritabanı ayarına dokunur). */
+/** Runs the measurements sequentially (not in parallel: they touch the same database setting). */
 export async function verify(
   driver: Driver,
   name: string,
@@ -78,7 +78,7 @@ export async function verify(
   return { generatedAt: now.toISOString(), driver: name, server: await serverVersion(driver, managementUrl), database };
 }
 
-/** Hata tek satır JSON olarak yazılır: yığın izi ve sürücü mesajı (host, kullanıcı, parola) basılmaz. */
+/** The error is written as single-line JSON: the stack trace and driver message (host, user, password) are not printed. */
 async function main() {
   try {
     const name = driverName(process.argv.slice(2));

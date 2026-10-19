@@ -18,7 +18,7 @@ const SETTINGS = "statement_timeout=5000,lock_timeout=1000,client_connection_che
 let port = 8000;
 let runtimePid = 1000;
 type Options = { broken?: boolean; pooled?: boolean; schemaMissing?: boolean; applied?: number; drift?: boolean; timeouts?: string; consoleMode?: string; replicaInRecovery?: boolean; replicaLag?: number };
-/** Doctor yalnızca okur: SELECT/SHOW dışındaki her deyim testi düşürür. */
+/** Doctor only reads: any statement other than SELECT/SHOW fails the test. */
 function fixture(options: Options = {}, replicas: string[] = []) {
   const fake = fakeDriver((text, _params, pool) => {
     if (!/^\s*(SELECT|SHOW)\b/.test(text)) throw new Error("Doctor must be read-only");

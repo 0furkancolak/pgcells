@@ -82,7 +82,7 @@ test("read.query after a write in the same scope is one plain statement on the p
 });
 
 test("read.query falls back to a READ ONLY transaction on the primary only while configured replicas are unusable", async () => {
-  // Replica durumu modül düzeyinde önbelleklenir: başka testlerle çakışmaması için ayrı URL.
+  // Replica state is cached at module level: a separate URL so it does not collide with other tests.
   const DOWN = "postgres://app:secret-pw@localhost:6434/one";
   const { db, fake } = open({ replicaStatusMs: 60_000 }, [DOWN], (text, params, pool) => {
     if (pool.url === DOWN) throw Object.assign(new Error("down"), { code: "ECONNREFUSED" });

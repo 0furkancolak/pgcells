@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { exportAt, neonApi } from "../../core/tools/neon";
 import { createTestManagement, directConfig, dropSchema, integration, q, raw, testSchema } from "./helpers";
 
-/** Sahte Neon API'si yerel veritabanını "geçmiş branch" olarak gösterir; varsayılan bağımlılıklar (gerçek `createManagement` + `exportSchema`) çalışır. */
+/** A fake Neon API presents the local database as a "past branch"; the default dependencies (the real `createManagement` + `exportSchema`) run. */
 integration("exportAt exports through the default dependencies: a temporary management on the branch URI, same schema, no URI in the result", async () => {
   const [admin, schema, url] = [raw(), testSchema(), directConfig().url];
   const m = createTestManagement({ schema });

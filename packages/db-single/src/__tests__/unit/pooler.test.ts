@@ -18,7 +18,7 @@ test("one server session seen by two held connections proves a pooler on the fir
 
 test("a pooler that only repeats a session on a later round is still found", async () => {
   let calls = 0;
-  // 1-4. sorgu farklı oturumlar; 5. ve 6. (üçüncü turun çifti) aynı oturum.
+  // Queries 1-4 are different sessions; 5 and 6 (the pair of the third round) are the same session.
   const fake = fakeDriver(() => [{ pid: ++calls <= 4 ? calls : 99 }]);
   expect(await usesTransactionPooler(fake.driver, url, { deadlineMs: 1000 })).toBe(true);
   expect(pidQueries(fake)).toBe(6);
@@ -29,7 +29,7 @@ test("two distinct sessions in every round mean a direct connection", async () =
   let pid = 0;
   const fake = fakeDriver(() => [{ pid: ++pid }]);
   expect(await usesTransactionPooler(fake.driver, url, { deadlineMs: 1000 })).toBe(false);
-  expect(pidQueries(fake)).toBe(20); // varsayılan 10 tur × 2
+  expect(pidQueries(fake)).toBe(20); // default 10 rounds × 2
   expect(fake.pools[0]?.released).toBe(20);
   expect(fake.pools[0]?.closed).toBe(true);
 

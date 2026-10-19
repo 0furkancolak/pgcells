@@ -17,7 +17,7 @@ const VALUES = `SELECT 9007199254740993::int8 AS i8, 1.25::numeric AS n, 5::int4
   ARRAY[1,2]::int4[] AS ia, '1 day'::interval AS iv, '10:00'::time AS tm, NULL::text AS nothing,
   $1::timestamptz AS ptz, $2::date AS pd, $3::bytea AS pby, $4::int8 AS pbig`;
 
-/** Dört sürücü de PgBouncer transaction pooling üzerinden aynı JavaScript değerlerini döndürür. */
+/** All four drivers return the same JavaScript values through PgBouncer transaction pooling. */
 for (const [name, driver] of Object.entries(drivers)) {
   const runtime = () => {
     const db = createDb(pooledConfig(), { driver, poolMax: 2 });
@@ -58,12 +58,12 @@ for (const [name, driver] of Object.entries(drivers)) {
     expect(setting).toEqual({ value: "5s" });
     expect(await failure(db.query("SELECT 1/0"))).toBe("22012");
     expect(await failure(db.transaction((tx) => tx.query("SELECT pg_sleep(1)"), { statementTimeoutMs: 50 }))).toBe("DATABASE_TIMEOUT");
-    // `migrate`in yazdığı veritabanı varsayılanı havuzdaki backend'lere uygulanır; SET LOCAL sızmaz.
+    // The database default written by `migrate` applies to the pool's backends; SET LOCAL does not leak.
     expect(await db.pool.query("SELECT current_setting('statement_timeout') AS value")).toEqual([{ value: "5s" }]);
   });
 
   integration(`${name}: management on a transaction-pooled URL fails fast`, async () => {
-    // Yeni bir URL yazımı: işlem başına doğrudan-bağlantı önbelleği yoklamayı gizleyemez.
+    // A fresh URL spelling: the per-process direct-connection cache cannot hide the probe.
     const m = createManagement(createConfig(`${pooledConfig().url}?application_name=pooled_${name}`), { driver });
     opened.push(m);
     expect(await failure(openSession(m))).toBe("DIRECT_CONNECTION_REQUIRED");

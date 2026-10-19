@@ -1,6 +1,6 @@
 # Açık kaynak paketleme ve yeniden adlandırma planı
 
-> **Uygulama notu (2026-10-19): paketleme uygulandı** (yeniden adlandırma, LICENSE, jamaster ayrımı, derleme hattı, İngilizce çeviri, yayın hattı). Kalan sahip işleri: npm paket adları ve yayın kimlik bilgisi, GitHub özel güvenlik bildirimi. Kalan çeviri: bazı test dosyalarındaki Türkçe yorumlar (bkz. yol haritası).
+> **Uygulama notu (2026-10-19): paketleme uygulandı** (yeniden adlandırma, LICENSE, jamaster ayrımı, derleme hattı, İngilizce çeviri, yayın hattı). Kalan sahip işleri: npm paket adları ve yayın kimlik bilgisi, GitHub özel güvenlik bildirimi. Test ve benchmark yorumları da İngilizceye çevrildi (bilinçli Türkçe test verisi hariç).
 
 Tarih: 2026-10-18 · Tasarım: [`2026-10-18-pgcells-oss-regions-design.md`](../specs/2026-10-18-pgcells-oss-regions-design.md) D1–D6, D12, D14, D19 · Ana yol: [roadmap](2026-10-18-roadmap-remaining.md) F0–F1
 

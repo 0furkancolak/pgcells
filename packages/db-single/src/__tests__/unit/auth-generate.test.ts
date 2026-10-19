@@ -1,5 +1,5 @@
-/** `generateAuthMigration`: paketin migration'larını geçici schema'ya yeniden oynatır; CONCURRENTLY index transaction dışında çalışır,
- * iptal dosya yazmaz ve geçici schema her yolda düşürülür (düşürme hatası asıl hatayı gizlemez). */
+/** `generateAuthMigration`: replays the package's migrations into a temporary schema; a CONCURRENTLY index runs outside the transaction,
+ * a cancel writes no file and the temporary schema is dropped on every path (a drop error does not hide the original error). */
 import { expect, test } from "bun:test";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -38,7 +38,7 @@ test("a CREATE INDEX CONCURRENTLY migration is replayed outside a transaction, s
   expect(at).toBeGreaterThan(0);
   expect(all[at - 1]).not.toMatch(/^BEGIN/);
   expect(all[at + 1]).not.toBe("COMMIT");
-  // Sıradan DDL transaction'da kalır.
+  // Ordinary DDL stays in the transaction.
   expect(all[all.findIndex((text) => text.includes("CREATE TABLE")) - 1]).toMatch(/^BEGIN/);
 });
 

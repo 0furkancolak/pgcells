@@ -1,11 +1,11 @@
-/** Redis'siz birim testleri: anahtarlar, LRU, single-flight, nesil ile geçersiz kılma, sahte pub/sub ve fail-open. */
+/** Unit tests without Redis: keys, LRU, single-flight, generation-based invalidation, fake pub/sub and fail-open. */
 import { expect, test } from "bun:test";
 import { createCache } from "../../cache";
 import type { RedisClient } from "../../client";
 import { createKeys, globalKey, tenantKey } from "../../keys";
 import { createPlacementCache } from "../../placement";
 
-/** Süreçler arası paylaşılan sahte Redis: yalnızca önbelleğin kullandığı komutlar. */
+/** Fake Redis shared across processes: only the commands the cache uses. */
 function fakeRedis(store = new Map<string, string>(), listeners: ((channel: string, message: string) => void)[] = []) {
   const calls = { get: 0 };
   let down = false;
@@ -19,7 +19,7 @@ function fakeRedis(store = new Map<string, string>(), listeners: ((channel: stri
       set: async (key: string, value: string) => (guard(), store.set(key, value), "OK"),
       del: async (key: string) => (guard(), Number(store.delete(key))),
       incr: async (key: string) => (guard(), store.set(key, String(Number(store.get(key) ?? 0) + 1)), Number(store.get(key))),
-      // Önbelleğin iki betiği: INCR'li yazma/silme ve sürüm karşılaştırmalı yazma.
+      // The cache's two scripts: write/delete with INCR, and write with a version comparison.
       eval: async (script: string, _count: number, key: string, versionKey: string, value: string, _ttl: number, version: string) => {
         guard();
         if (script.includes("INCR")) {
@@ -57,8 +57,8 @@ test("local LRU is bounded, expires and needs no Redis", async () => {
   const cache = createCache({ max: 2, localTtlMs: 30 });
   await cache.set("a", 1);
   await cache.set("b", 2);
-  expect(await cache.get<number>("a")).toBe(1); // a en yeni
-  await cache.set("c", 3); // b atılır
+  expect(await cache.get<number>("a")).toBe(1); // a is the newest
+  await cache.set("c", 3); // b is evicted
   expect(await cache.get("b")).toBeUndefined();
   expect(await cache.get<number>("a")).toBe(1);
   await new Promise((resolve) => setTimeout(resolve, 40));
@@ -88,7 +88,7 @@ test("tenant generation invalidation and cross-process local invalidation", asyn
   expect(await b.forTenant("abc").get<string>("x")).toBe("v1");
   await a.set("g", 1);
   expect(await b.get<number>("g")).toBe(1);
-  await a.set("g", 2); // b'nin yerel kaydı yayınla silinir
+  await a.set("g", 2); // b's local entry is removed by the broadcast
   expect(await b.get<number>("g")).toBe(2);
   await a.invalidateTenant("abc");
   expect(await b.forTenant("abc").get("x")).toBeUndefined();
@@ -116,20 +116,20 @@ test("placement cache: sync local hit, only active placements, invalidation", as
   const placements = createPlacementCache({ redis: fake.redis, db });
   expect(await placements("abc")).toBeUndefined();
   expect((await placements.loadPlacement("abc")).databaseId).toBe("db1");
-  expect(placements("abc")).toEqual(active); // Promise değil
+  expect(placements("abc")).toEqual(active); // not a Promise
   expect(fake.store.has("t:{abc}:placement")).toBe(true);
 
   const other = createPlacementCache({ redis: fake.other().redis, db });
-  expect(await other("abc")).toEqual(active); // Redis isabeti
+  expect(await other("abc")).toEqual(active); // Redis hit
   await placements.invalidatePlacement("abc");
-  expect(other("abc")).toBeInstanceOf(Promise); // yerel kayıt yayınla silindi
+  expect(other("abc")).toBeInstanceOf(Promise); // the local entry was removed by the broadcast
   status = "maintenance";
   expect((await other.loadPlacement("abc")).status).toBe("maintenance");
-  expect(fake.store.has("t:{abc}:placement")).toBe(false); // active olmayan yazılmaz
+  expect(fake.store.has("t:{abc}:placement")).toBe(false); // a non-active placement is not written
   expect(reads).toBe(2);
 
   fake.store.set("t:{abc}:placement", JSON.stringify({ ...active, tenantId: "xyz" }));
-  expect(await createPlacementCache({ redis: fake.other().redis, db })("abc")).toBeUndefined(); // geçersiz kayıt reddedilir
+  expect(await createPlacementCache({ redis: fake.other().redis, db })("abc")).toBeUndefined(); // an invalid record is rejected
 });
 
 test("tenant generations learned from pub/sub stay bounded by max: the oldest is evicted and re-read from Redis", async () => {
@@ -137,11 +137,11 @@ test("tenant generations learned from pub/sub stay bounded by max: the oldest is
   const two = one.other();
   const listener = createCache({ redis: one.redis, max: 2 });
   const publisher = createCache({ redis: two.redis, max: 2 });
-  for (const tenant of ["tenant-a", "tenant-b", "tenant-c"]) await publisher.invalidateTenant(tenant); // listener nesilleri yayından öğrenir
+  for (const tenant of ["tenant-a", "tenant-b", "tenant-c"]) await publisher.invalidateTenant(tenant); // the listener learns generations from the broadcast
   const before = one.calls.get;
-  await listener.forTenant("tenant-c").get("x"); // en yeni: nesil yerelde, sayaç okunmaz (yalnızca değer okunur)
+  await listener.forTenant("tenant-c").get("x"); // newest: the generation is local, the counter is not read (only the value is read)
   const newest = one.calls.get - before;
-  await listener.forTenant("tenant-a").get("x"); // atıldı: nesil sayacı Redis'ten yeniden okunur
+  await listener.forTenant("tenant-a").get("x"); // evicted: the generation counter is re-read from Redis
   expect(one.calls.get - before - newest).toBe(newest + 1);
   listener.close();
   publisher.close();

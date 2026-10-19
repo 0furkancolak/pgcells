@@ -93,15 +93,15 @@ test("server statement timeouts become DATABASE_TIMEOUT after rollback; other er
   expect(fake.pools[0]?.released).toBe(3);
 });
 
-/** Cevap deadline'ı + iptal beklemesi + zamanlayıcı ve olay döngüsü payı. */
+/** Answer deadline + cancel wait + a margin for timers and the event loop. */
 const ANSWER_BOUND_MS = (deadlineMs: number) => deadlineMs + 1000 + 500 + 550;
 const never = () => new Promise<never>(() => {});
-/** `until` doğru olana kadar (en çok 5 sn) olay döngüsünü döndürür; sabit bekleme yok. */
+/** Spins the event loop until `until` is true (5 s at most); no fixed wait. */
 const drain = async (until: () => boolean) => {
   const end = performance.now() + 5000;
   while (!until() && performance.now() < end) await new Promise((resolve) => setImmediate(resolve));
 };
-/** `BEGIN` sunucu bekleyen (PgBouncer arkasında DB kapalı) bağlantılar veren havuz. */
+/** Pool that hands out connections whose `BEGIN` waits on the server (DB down behind PgBouncer). */
 function beginWaitsPool() {
   const fake = fakeDriver();
   const inner = fake.driver("postgres://h/one", poolOptions);
@@ -133,7 +133,7 @@ test("an answer that arrives while the cancellation is pending is returned, and 
   const db = connect(fake.driver("postgres://h/one", poolOptions), { deadlineMs: 50, maxPending: 4 });
   const pending = db.query("UPDATE t SET n = n + 1 FROM pg_sleep(10) RETURNING n");
   await drain(() => fake.pools[0]?.cancels === 1);
-  answer([{ n: 2 }]); // deyim iptal ulaşmadan commit etti: çağıran gerçek sonucu alır, görünmez yazım yok
+  answer([{ n: 2 }]); // the statement committed before the cancel arrived: the caller gets the real result, no invisible write
   expect(await pending).toEqual([{ n: 2 }]);
   expect(fake.pools[0]).toMatchObject({ released: 1, discarded: 1 });
   await db.close();
@@ -168,7 +168,7 @@ test("a transaction statement past its deadline fails the transaction: no COMMIT
   ).rejects.toMatchObject({ code: "DATABASE_TIMEOUT" });
   expect(fake.commands.map((command) => command.text)).toEqual(["BEGIN", "INSERT INTO t VALUES (1)", "SELECT pg_sleep(10)"]);
   expect(fake.pools[0]).toMatchObject({ cancels: 1, released: 1, discarded: 1 });
-  // Uygulama hatası: ROLLBACK sağlam bağlantıda çalışır ve bağlantı havuza döner.
+  // Application error: ROLLBACK runs on a healthy connection and the connection returns to the pool.
   await expect(db.transaction(async () => Promise.reject(new Error("app")))).rejects.toThrow("app");
   expect(fake.commands.slice(-2).map((command) => command.text)).toEqual(["BEGIN", "ROLLBACK"]);
   expect(fake.pools[0]).toMatchObject({ released: 2, discarded: 1 });

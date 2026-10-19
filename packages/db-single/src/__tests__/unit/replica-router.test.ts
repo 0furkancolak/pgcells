@@ -6,7 +6,7 @@ import { fakeDriver } from "../fixtures/fake-driver";
 
 type State = { inRecovery?: boolean; caughtUp?: boolean; lagMs?: number | null; fail?: string };
 const PRIMARY = "postgres://p@h/d";
-/** URL'ye göre replica durumu; birincil her zaman `0/3000000` konumunu bildirir. */
+/** Replica state by URL; the primary always reports position `0/3000000`. */
 function fixture(states: Record<string, State>, options: { maxLagMs?: number; statusMs?: number; sharedRotation?: boolean } = {}) {
   const urls = Object.keys(states);
   const fake = fakeDriver((text, _params, pool) => {
@@ -90,7 +90,7 @@ test("a failing probe marks the replica down with the error code only, once per 
   expect(JSON.stringify(row)).not.toContain("secret");
   tick(5001);
   await router.pick();
-  expect(probes()).toBe(3); // report zorla yeniledi + tazelik sonrası yeni yoklama
+  expect(probes()).toBe(3); // report forced a refresh + a new probe after freshness
 });
 
 test("one refresh round reads the primary position once, however many replicas it probes", async () => {
@@ -99,10 +99,10 @@ test("one refresh round reads the primary position once, however many replicas i
   await router.pick();
   expect([probes(), lsnReads()]).toEqual([3, 1]);
   await router.pick();
-  expect([probes(), lsnReads()]).toEqual([3, 1]); // taze: ne replica ne primary sorulur
+  expect([probes(), lsnReads()]).toEqual([3, 1]); // fresh: neither a replica nor the primary is queried
   tick(5001);
   await Promise.all([router.pick(), router.pick()]);
-  expect([probes(), lsnReads()]).toEqual([6, 2]); // eşzamanlı ikinci tur süren yoklamaları paylaşır, primary'ye yeniden sormaz
+  expect([probes(), lsnReads()]).toEqual([6, 2]); // a concurrent second round shares the in-flight probes and does not ask the primary again
   await router.report();
   expect([probes(), lsnReads()]).toEqual([9, 3]);
 });

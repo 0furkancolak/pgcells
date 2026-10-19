@@ -1,7 +1,7 @@
 /* global __ENV */
-// Ladder rung'ları, spike ve soak için tek k6 betiği. PLAN = JSON [[rps, seconds], ...]: her segment önceki hızdan (ilki için
-// START_RATE) 1 s rampa yapar ve sabit kalır; istekler seg:sNNN ile etiketlenir, böylece her segmentin kendi p50/p95/p99,
-// hata oranı ve sayısı olur. SLO eşikleri: p95 < 50 ms, hata < %1 (segment başına ve genel; değerlendirmeyi run.ts yapar).
+// Single k6 script for ladder rungs, spike and soak. PLAN = JSON [[rps, seconds], ...]: each segment ramps for 1 s from the previous rate (START_RATE
+// for the first) and holds; requests are tagged seg:sNNN, so each segment gets its own p50/p95/p99,
+// error rate and count. SLO thresholds: p95 < 50 ms, errors < 1% (per segment and overall; run.ts does the evaluation).
 import http from 'k6/http';
 import exec from 'k6/execution';
 
@@ -42,7 +42,7 @@ export const options = {
 };
 
 const pick = (n) => 1 + Math.floor(Math.random() * n);
-const tenant = () => `t${String(Math.floor(Math.random() * TENANTS)).padStart(5, '0')}.bench.test`; // Host başlığı; tenant id ilk etikettir
+const tenant = () => `t${String(Math.floor(Math.random() * TENANTS)).padStart(5, '0')}.bench.test`; // Host header; the tenant id is the first label
 const hostOf = (id) => `${id}.bench.test`;
 const get = (path, host, tags, headers = {}) => http.get(`${BASE}${path}`, { headers: { Host: host, ...headers }, tags, timeout: '10s' });
 const post = (path, host, tags) => http.post(`${BASE}${path}`, null, { headers: { Host: host }, tags, timeout: '10s' });

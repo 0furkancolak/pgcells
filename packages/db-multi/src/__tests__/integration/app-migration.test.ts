@@ -1,5 +1,5 @@
-/** Başka uygulamanın SQL yedeğinden aktarım: dump → parçalar → defineAppMigration (kullanıcılar + tenant tabloları), tekrar çalıştırma.
- * Hedefler paketin auth tablolarıdır: `students`, `teachers` ve `students`'a yabancı anahtarlı `student_sessions`. */
+/** Import from another application's SQL backup: dump → parts → defineAppMigration (users + tenant tables), rerun.
+ * The targets are the package's auth tables: `students`, `teachers` and `student_sessions` with a foreign key to `students`. */
 import { afterAll, beforeAll, expect } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

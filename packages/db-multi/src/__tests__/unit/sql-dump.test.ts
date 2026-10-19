@@ -1,4 +1,4 @@
-/** SQL yedeği ayrıştırma: pg_dump COPY/INSERT, mysqldump, tip dönüşümü, parçalama ve aktarım iskeleti (DB'siz). */
+/** SQL dump parsing: pg_dump COPY/INSERT, mysqldump, type conversion, chunking and the transfer skeleton (no DB). */
 import { afterAll, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

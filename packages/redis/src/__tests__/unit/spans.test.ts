@@ -1,4 +1,4 @@
-/** Telemetri span'leri (Redis'siz): önbellek kaynakları, senkron placement isabeti, bozuk handler ve kuyruk işi hata kodu. */
+/** Telemetry spans (without Redis): cache sources, a synchronous placement hit, a faulty handler and the queue job error code. */
 import { expect, test } from "bun:test";
 import type { Span } from "@0furkancolak/pgcells";
 import { createCache } from "../../cache";
@@ -30,7 +30,7 @@ test("placement span: sync local hit stays sync, db load is reported", async () 
   const db = { platform: { get: async () => active } } as never;
   const placements = createPlacementCache({ db, onSpan });
   await placements.loadPlacement("abc");
-  expect(placements("abc")).toEqual(active); // Promise değil
+  expect(placements("abc")).toEqual(active); // not a Promise
   expect(await createPlacementCache({ db, onSpan })("abc")).toBeUndefined();
   expect(details()).toEqual(["placement.cache:db", "placement.cache:hit-local", "placement.cache:miss"]);
   expect(spans[1]?.tenantId).toBe("abc");

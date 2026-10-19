@@ -1,5 +1,5 @@
-/** `test:integration` preload'u: süit paylaşılan DB'de iz bırakmaz. Başta schema, veritabanı ve `public` ilişki adlarının anlık görüntüsü
- * alınır; sonda yeni kalan her ad listelenir ve koşu başarısız olur. */
+/** `test:integration` preload: the suite leaves no trace in the shared DB. At the start a snapshot of schema, database and `public` relation names
+ * is taken; at the end every newly remaining name is listed and the run fails. */
 import { afterAll, beforeAll } from "bun:test";
 import { createTestManagement, enabled } from "./helpers";
 

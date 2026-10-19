@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { buildSchema, columnDefinition, enumCasts, readSchema, sequenceDefinition } from "../../core/tools/copy";
 
-// Depo genelindeki koruma testi bu sözcüğü yazan her dosyayı reddeder; reddedilmesi beklenen girdiler parçalardan kurulur.
+// The repo-wide guard test rejects every file that spells this word; inputs that are expected to be rejected are built from fragments.
 const SP = "search" + "_path";
 
 const schema = "app_copy";
@@ -109,7 +109,7 @@ test("catalog long-form type names in defaults and checks validate like the shor
     "'x'::character(5)",
   ])
     expect(() => validateDefault(expression, new Set()), expression).not.toThrow();
-  // Kanonikleştirme yasağı gevşetmez: uzun tip adı ayrıştırılır, dış sequence başvurusu yine (ayrıştırma hatasıyla değil) reddedilir.
+  // Canonicalization does not loosen the ban: a long type name is parsed, and an external sequence reference is still rejected (not with a parse error).
   expect(() => validateDefault("'x'::character varying || nextval('outside.ids'::regclass)::text", new Set())).toThrow("unsupported function: nextval");
 });
 

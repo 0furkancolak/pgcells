@@ -1,4 +1,4 @@
-/** Bench sürücü seçimi: adı verilen sürücü tembel (lazy) import edilir, böylece yalnızca seçilen sürücünün bağımlılığı yüklenir. */
+/** Bench driver selection: the named driver is imported lazily, so only the selected driver's dependency is loaded. */
 import type { Driver } from "@0furkancolak/pgcells";
 
 const DRIVERS: Record<string, () => Promise<Driver>> = {

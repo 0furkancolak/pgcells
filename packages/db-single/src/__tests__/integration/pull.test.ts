@@ -1,4 +1,4 @@
-/** `pull`: canlı schema → başlangıç migration'ı → aynı yapı başka schema'da; farklı yapı farklı özet; desteklenmeyen nesneler; baseline ile uygulanmış. */
+/** `pull`: live schema → initial migration → same structure in another schema; a different structure gives a different digest; unsupported objects; applied via baseline. */
 import { expect } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -7,7 +7,7 @@ import { createRunner } from "../../core/migrations/runner";
 import { pullSchema, pullStructure } from "../../core/tools/pull";
 import { createTestManagement, dropSchema, failure, integration, packageCopy, q, raw, testSchema } from "./helpers";
 
-/** Eski uygulamanın bir schema'sı: enum, identity, yabancı anahtar, CHECK, kısmi ifade index'i ve Drizzle ledger'ı. */
+/** A schema of a legacy application: enum, identity, foreign key, CHECK, partial expression index and the Drizzle ledger. */
 const legacySchema = (schema: string) => `CREATE SCHEMA ${q(schema)};
 CREATE TYPE ${q(schema, "task_status")} AS ENUM ('TODO', 'DONE');
 CREATE TABLE ${q(schema, "users")} (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), email varchar(255) NOT NULL, created_at timestamp(3) with time zone DEFAULT now() NOT NULL, tags text[] DEFAULT '{}'::text[]);
@@ -28,7 +28,7 @@ integration("pull writes an initial migration that rebuilds the same structure i
     expect(result).toMatchObject({ id: "20260915180427_init", schema: source, enums: 1, tables: 2, exclude: ["_migrations", "_seeds", "drizzle_migrations"] });
     expect(result.path).toBe("src/migrations/20260915180427_init.sql");
     const text = await Bun.file(join(root, result.path)).text();
-    // Yalnızca başlık kaynağı adlandırır; SQL schema'sızdır.
+    // Only the header names the source; the SQL is schema-free.
     expect(text.split("\n").slice(2).join("\n")).not.toContain(source);
     expect(text).toContain("bpchar(3)");
     const [migration] = compileMigrations([[result.id, text]]);
@@ -41,11 +41,11 @@ integration("pull writes an initial migration that rebuilds the same structure i
     expect((await pullStructure(admin, copy)).structure).toBe(result.structure);
     await admin.exec(`INSERT INTO ${q(copy, "users")} (email) VALUES ('a@example.com'); INSERT INTO ${q(copy, "tasks")} (user_id) SELECT id FROM ${q(copy, "users")}`);
 
-    // Aynı eski schema bir index eksikse yapısı (özeti) farklıdır.
+    // The same legacy schema with one index missing has a different structure (digest).
     await admin.exec(`${legacySchema(drifted)}; DROP INDEX ${q(drifted, "users_email_lower")}`);
     expect((await pullStructure(admin, drifted)).structure).not.toBe(result.structure);
 
-    // Kaynak schema'da migration çalıştırılmaz, uygulanmış işaretlenir (CLI akışı: pull → codegen → baseline).
+    // No migration runs in the source schema; it is marked as applied (CLI flow: pull → codegen → baseline).
     const runner = createRunner({ migrations: compileMigrations([[result.id, text]]), seeds: [] });
     const target = createTestManagement({ schema: source });
     try {
@@ -112,7 +112,7 @@ integration("objects an extension owns in the schema (functions, types, tables) 
     const pulled = await pullStructure(admin, schema);
     expect(pulled.counts).toEqual({ enums: 0, tables: 1, constraints: 1, indexes: 0 });
     expect(pulled.sql).toContain('"notes"');
-    // Etiketsiz enum da yazılmaz (eski pull davranışı).
+    // A label-less enum is not written either (legacy pull behavior).
     expect(pulled.sql).not.toMatch(/ext_|gen_random_bytes|no_labels/);
   } finally {
     await dropSchema(admin, schema);
@@ -128,7 +128,7 @@ integration("pull through the CLI prints next steps whose baseline targets the s
     await admin.exec(`CREATE SCHEMA ${q(schema)}; CREATE TABLE ${q(schema, "notes")} (id integer PRIMARY KEY)`);
     const pulled = (await copy.cli("pull", schema)) as { id: string; next: string };
     expect(pulled.next).toContain(`bun run cli migration baseline ${pulled.id} --schema ${schema}`);
-    // Önerilen komut yazıldığı gibi çalıştırılır: codegen, ardından baseline (kaynak schema'da, public'te değil).
+    // The suggested command is run exactly as printed: codegen, then baseline (in the source schema, not in public).
     await copy.codegen();
     const printed = /bun run cli (migration baseline [^)]+)\)/.exec(pulled.next)?.[1] ?? "";
     expect(await copy.cli(...printed.split(" "))).toEqual({ migrations: [pulled.id] });

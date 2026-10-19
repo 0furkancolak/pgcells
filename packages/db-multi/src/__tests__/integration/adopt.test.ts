@@ -1,4 +1,4 @@
-/** Var olan schema'ları tenant olarak benimseme (gerçek PostgreSQL, iki DB). */
+/** Adopting existing schemas as tenants (real PostgreSQL, two DBs). */
 import { afterAll, beforeAll, expect } from "bun:test";
 import { tenantMigrations } from "../../core/migrations/registry";
 import { adoptSchemas, planAdoption, rollbackAdoption } from "../../core/tools/adopt";
@@ -24,7 +24,7 @@ afterAll(async () => {
   await app.close();
 });
 
-/** Paylaşılan DB'ler temiz kalır: bu çalıştırmanın placement, tenant satırları ve schema'ları silinir. */
+/** Shared DBs stay clean: this run's placements, tenant rows and schemas are dropped. */
 async function removeTestTenants() {
   const prefix = `adopt-${u}-`;
   await app.pools.platform.transaction(async (tx) => {
@@ -41,8 +41,8 @@ async function removeTestTenants() {
   }
 }
 
-/** Paketin tenant DDL'ini taşıyan (baseline ile benimsenebilir) eski schema: provision edilir, placement'sız ve ledger'sız bırakılır,
- * sonra uygulamaya özgü veri, sequence'lı tablo, OID'e bağlı view ve (isteğe bağlı) adı metin olarak geçen fonksiyon eklenir. */
+/** A legacy schema carrying the package's tenant DDL (adoptable with a baseline): it is provisioned, left without placement and ledger,
+ * then app-specific data, a table with a sequence, an OID-bound view and (optionally) a function whose name appears as text are added. */
 async function createLegacySchema(label: string, databaseId: string, withFunction = false) {
   const s = legacy(label);
   await provisionTenant(app, id(label), databaseId);
@@ -68,7 +68,7 @@ integration("adoption: plan reports problems, apply renames and registers, rerun
   await app.pools.node("db1").exec(`CREATE SCHEMA ${q(target("three"))}`);
   const rows = [row("one"), row("two", "db1"), row("three"), { ...row("bad"), tenantId: "Bad_Id" }, row("gone"), { ...row("far"), databaseId: "db9" }];
 
-  // Dolu schema baseline'sız benimsenemez (etkin olur ama paket migration'ları var olan tablolara çarpar).
+  // A populated schema cannot be adopted without a baseline (it would activate, but the package migrations collide with the existing tables).
   expect((await planAdoption(app, rows.slice(1, 2))).rows.map((r) => [r.status, ...r.problems.map((p) => p.code)])).toEqual([["blocked", "BASELINE_REQUIRED"]]);
   expect((await adoptSchemas(app, rows.slice(1, 2))).results.map((r) => [r.status, r.problems?.[0]?.code])).toEqual([["blocked", "BASELINE_REQUIRED"]]);
 
@@ -81,10 +81,10 @@ integration("adoption: plan reports problems, apply renames and registers, rerun
     ["blocked", "SOURCE_SCHEMA_MISSING"],
     ["blocked", "DATABASE_NOT_CONFIGURED"],
   ]);
-  // Yalnızca fonksiyon gövdesi sayılır: OID'e bağlı view ve serial varsayılanı listede yok.
+  // Only function bodies count: the OID-bound view and the serial default are not in the list.
   expect(plan.rows[0]?.problems[0]?.objects).toEqual([{ kind: "function", name: `${legacy("one")}.count_pupils()` }]);
 
-  // Düzeltme: adı metin olarak geçen fonksiyonu kaldır.
+  // Fix: remove the function whose name appears as text.
   await app.pools.node("db0").exec(`DROP FUNCTION ${q(legacy("one"), "count_pupils")}()`);
   const events: Record<string, unknown>[] = [];
   const applied = await adoptSchemas(app, rows.slice(0, 2), { baseline: baseline(), report: (event) => void events.push(event) });
@@ -95,7 +95,7 @@ integration("adoption: plan reports problems, apply renames and registers, rerun
   ]);
   expect(events.filter((e) => e.tenantId === id("one") && e.step).map((e) => e.step)).toEqual(["claimed", "renamed", "baselined"]);
 
-  // Veri placement üzerinden erişilebilir; eski ad yok.
+  // The data is reachable through the placement; the old name is gone.
   for (const [label, databaseId] of [["one", "db0"], ["two", "db1"]] as const) {
     const placement = await app.platform.get(id(label));
     expect(placement).toMatchObject({ databaseId, schemaName: target(label), status: "active", placementVersion: 1, schemaVersion: tenantMigrations.length });
@@ -103,12 +103,12 @@ integration("adoption: plan reports problems, apply renames and registers, rerun
     expect(await failure(app.pools.node(databaseId).query(`SELECT 1 FROM ${q(legacy(label), "pupils")}`))).toBe("42P01");
   }
 
-  // Tekrar: hiçbir şey değişmez, manifest yine tam.
+  // Again: nothing changes, the manifest is still complete.
   const rerun = await adoptSchemas(app, rows.slice(0, 2), { baseline: baseline() });
   expect(rerun.results.map((r) => r.status)).toEqual(["alreadyAdopted", "alreadyAdopted"]);
   expect(rerun.manifest).toHaveLength(2);
 
-  // Crash benzetimi: (a) placement sahiplenilmiş, rename yok; (b) rename yapılmış, etkinleştirme yok.
+  // Crash simulation: (a) placement claimed, no rename; (b) rename done, no activation.
   await createLegacySchema("four", "db0");
   await createLegacySchema("five", "db0");
   await app.platform.create(id("four"), "db0");
@@ -123,7 +123,7 @@ integration("adoption: plan reports problems, apply renames and registers, rerun
   expect(resumed.results.map((r) => r.status)).toEqual(["adopted", "alreadyAdopted"]);
   for (const label of ["four", "five"]) expect(await app.platform.get(id(label))).toMatchObject({ status: "active", schemaVersion: tenantMigrations.length });
 
-  // Rollback: taşınmış (placement sürümü değişmiş) tenant reddedilir.
+  // Rollback: a moved tenant (placement version changed) is refused.
   await app.pools.platform.query("UPDATE platform.placements SET placement_version=2 WHERE tenant_id=$1", [id("two")]);
   const refused = await rollbackAdoption(app, applied.manifest.slice(1));
   expect(refused.results).toEqual([expect.objectContaining({ status: "failed", error: "ROLLBACK_NOT_ALLOWED" })]);
@@ -140,7 +140,7 @@ integration("adoption: plan reports problems, apply renames and registers, rerun
 });
 
 integration("adoption with a baseline marks the package migrations applied on a schema that already has them", async () => {
-  // Paket şemasını taşıyan "eski" schema: normal provision, sonra placement'sız ve ledger'sız bırakılır.
+  // A "legacy" schema carrying the package schema: normal provision, then left without placement and ledger.
   const label = "base";
   await provisionTenant(app, id(label), "db0");
   await app.pools.platform.transaction(async (tx) => {

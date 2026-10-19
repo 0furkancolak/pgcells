@@ -7,7 +7,7 @@ import { createTestRuntime, createUser, enabled, integration, listUsers, removeT
 type Row = { id: string; name: string };
 const addUser = async (db: TenantContext, name: string, id?: string) =>
   (await db.query<Row[]>(createUser, [id ?? crypto.randomUUID(), name, uniqueEmail()]))[0] as Row;
-/** `account.user_id` → `users(id)` yabancı anahtarı: tenant içi ilişki. */
+/** `account.user_id` → `users(id)` foreign key: an intra-tenant relation. */
 const addAccount = (db: TenantContext, userId: string) =>
   db.query(prepareQuery("INSERT INTO account (account_id, provider_id, user_id) VALUES ($1, 'test', $2::uuid)"), [crypto.randomUUID(), userId]);
 const users = (db: TenantContext, limit = 100, offset = 0) => db.query<Row[]>(listUsers, [limit, offset]);

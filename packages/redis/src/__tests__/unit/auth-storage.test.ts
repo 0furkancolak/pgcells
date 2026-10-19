@@ -1,10 +1,10 @@
-/** Redis'siz `createAuthStorage`: geriye uyumlu önekler, TTL, atomik `getAndDelete` / `increment` sözleşmesi, fail-open ve span'ler. */
+/** `createAuthStorage` without Redis: backward-compatible prefixes, TTL, the atomic `getAndDelete` / `increment` contract, fail-open and spans. */
 import { expect, test } from "bun:test";
 import type { Span } from "@0furkancolak/pgcells";
 import { createAuthStorage } from "../../auth-storage";
 import type { RedisClient } from "../../client";
 
-/** Yalnızca auth deposunun kullandığı komutlar; `eval` artırma betiğinin davranışını taklit eder. */
+/** Only the commands the auth storage uses; `eval` mimics the behavior of the increment script. */
 function fakeRedis() {
   const store = new Map<string, string>();
   const ttls = new Map<string, number>();
@@ -96,7 +96,7 @@ test("a tenant auth type named app is refused: tenant foo + app would share the 
   expect(() => createAuthStorage(redis, { authType: "foo" })).not.toThrow(); // tenant:foo:app:
   expect(() => createAuthStorage(redis, { authType: "app", tenantId: "foo" })).toThrow(expect.objectContaining({ code: "INVALID_CONFIG" })); // tenant:foo:app:
   expect(() => createAuthStorage(redis, { authType: "app" })).not.toThrow(); // platform: tenant:app:app:
-  expect(() => createAuthStorage(redis, { authType: "app", tenantId: "foo", prefix: "custom:" })).not.toThrow(); // tam önek çağıranındır
+  expect(() => createAuthStorage(redis, { authType: "app", tenantId: "foo", prefix: "custom:" })).not.toThrow(); // the caller owns the full prefix
 });
 
 test("a session delete that fails is reported, and the session never silently becomes valid again in this process", async () => {
@@ -105,14 +105,14 @@ test("a session delete that fails is reported, and the session never silently be
   const storage = createAuthStorage(redis, { authType: "user", tenantId: "revoke", onError: (error) => errors.push(error) });
   await storage.set("session-1", '{"userId":"u1"}', 3600);
   setDown(true);
-  await expect(storage.delete("session-1")).rejects.toMatchObject({ code: "AUTH_STORAGE_UNAVAILABLE" }); // çıkış başarılı görünmez
-  setDown(false); // Redis geri geldi; kayıt Redis'te hâlâ duruyor
+  await expect(storage.delete("session-1")).rejects.toMatchObject({ code: "AUTH_STORAGE_UNAVAILABLE" }); // sign-out never appears to succeed
+  setDown(false); // Redis is back; the record is still in Redis
   expect(store.has("tenant:revoke:user:session-1")).toBe(true);
-  expect(await createAuthStorage(redis, { authType: "user", tenantId: "revoke" }).get("session-1")).toBeNull(); // süreçteki başka örnek de
+  expect(await createAuthStorage(redis, { authType: "user", tenantId: "revoke" }).get("session-1")).toBeNull(); // so does another instance in the process
   expect(await storage.getAndDelete("session-1")).toBeNull();
-  expect(store.has("tenant:revoke:user:session-1")).toBe(false); // silme yeniden denendi
+  expect(store.has("tenant:revoke:user:session-1")).toBe(false); // the delete was retried
   expect(errors).toHaveLength(1);
-  // Aynı anahtar yeniden yazılırsa (yeni oturum) maske kalkar.
+  // If the same key is written again (a new session), the mask is lifted.
   await storage.set("session-1", '{"userId":"u2"}', 60);
   expect(await storage.get("session-1")).toBe('{"userId":"u2"}');
 });
@@ -139,10 +139,10 @@ test("the local rate-limit fallback is per Redis client, like the revocation mas
   const target = createAuthStorage(second.redis, options);
   const key = "sign-in:203.0.113.9";
   expect([await migrating.increment(key, 60), await migrating.increment(key, 60)]).toEqual([1, 2]);
-  // İkinci istemci aynı anahtarı sıfırdan sayar: çift yazımda kullanıcı yapılandırılan denemenin yarısında kilitlenmez.
+  // The second client counts the same key from zero: with a double write, the user is not locked out at half the configured attempts.
   expect([await target.increment(key, 60), await target.increment(key, 60)]).toEqual([1, 2]);
   expect(await migrating.increment(key, 60)).toBe(3);
-  // Aynı istemcinin ikinci deposu sayacı paylaşır (süreç içi pencere istemci başınadır).
+  // A second storage on the same client shares the counter (the in-process window is per client).
   expect(await createAuthStorage(first.redis, options).increment(key, 60)).toBe(4);
 });
 
@@ -152,11 +152,11 @@ test("while Redis is down the rate limit keeps counting locally (bounded) instea
   setDown(true);
   const counts: number[] = [];
   for (let i = 0; i < 5; i++) counts.push(await storage.increment("sign-in:203.0.113.7", 60));
-  expect(counts).toEqual([1, 2, 3, 4, 5]); // yapılandırılmış sınır (ör. 3) kesintide de aşılır ve istek reddedilir
+  expect(counts).toEqual([1, 2, 3, 4, 5]); // the configured limit (e.g. 3) is also exceeded during an outage, and the request is rejected
   setDown(false);
-  expect(await storage.increment("sign-in:203.0.113.7", 60)).toBe(1); // Redis dönünce normal Redis sayacı
+  expect(await storage.increment("sign-in:203.0.113.7", 60)).toBe(1); // once Redis is back, the normal Redis counter
   setDown(true);
   for (let i = 0; i < 10_000; i++) await storage.increment(`flood-${i}`, 60);
-  expect(await storage.increment("sign-in:198.51.100.9", 60)).toBe(Number.MAX_SAFE_INTEGER); // yedek dolu: yeni anahtar sınırı aşmış sayılır
-  expect(await storage.increment("flood-1", 60)).toBe(2); // mevcut sayaçlar sayılmaya devam eder
+  expect(await storage.increment("sign-in:198.51.100.9", 60)).toBe(Number.MAX_SAFE_INTEGER); // fallback full: a new key is treated as over the limit
+  expect(await storage.increment("flood-1", 60)).toBe(2); // existing counters keep counting
 });

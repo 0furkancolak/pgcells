@@ -5,7 +5,7 @@ import { createReplicaRouter, type StatusCache } from "../../core/tenants/replic
 import { fakeDriver } from "../fixtures/fake-driver";
 
 type State = { inRecovery?: boolean; caughtUp?: boolean; lagMs?: number | null; fail?: string };
-/** URL'ye göre replica durumu; primary her zaman `0/3000000` konumunu bildirir. */
+/** Replica state by URL; the primary always reports position `0/3000000`. */
 function fixture(states: Record<string, State>, options: { maxLagMs?: number; statusMs?: number; sharedRotation?: boolean } = {}) {
   const urls = Object.keys(states);
   const fake = fakeDriver((text, _params, pool) => {
@@ -65,7 +65,7 @@ test("a failing probe marks the replica down with the error code only, once per 
   expect(JSON.stringify(row)).not.toContain("secret");
   tick(5001);
   await router.pick("db0");
-  expect(probes()).toBe(3); // report zorla yeniledi + tazelik sonrası yeni yoklama
+  expect(probes()).toBe(3); // report forced a refresh + a new probe after freshness
 });
 
 test("markDown removes a replica until its status expires", async () => {
@@ -86,7 +86,7 @@ test("report probes every replica fresh and lists 1-based numbers without URLs",
 
 test("the default rotation is shared by routers, so per-request routers (Workers) do not all start on replica 1", async () => {
   const picked = async () => {
-    const f = fixture({ [R1]: {}, [R2]: {} }, { sharedRotation: true }); // yeni havuz ve router; sıra modül düzeyindeki varsayılanı paylaşır
+    const f = fixture({ [R1]: {}, [R2]: {} }, { sharedRotation: true }); // new pool and router; the rotation shares the module-level default
     const handle = await f.router.pick("db0");
     await handle?.db.query("SELECT 1");
     return f.fake.commands.at(-1)?.url;

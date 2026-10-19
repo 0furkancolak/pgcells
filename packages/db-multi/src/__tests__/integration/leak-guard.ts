@@ -1,6 +1,6 @@
-/** `test:integration` preload'u: süit paylaşılan DB'lerde iz bırakmaz. Başta tenant, taşıma, schema ve veritabanı adlarının anlık
- * görüntüsü alınır; sonda yeni kalan her ad listelenir ve koşu başarısız olur. Sızan tenant'lar placement kapasitesini doldurur ve
- * sonraki koşular `NO_CAPACITY` ile düşer. */
+/** `test:integration` preload: the suite leaves no trace in the shared DBs. At the start a snapshot of tenant, move, schema and database names
+ * is taken; at the end every newly remaining name is listed and the run fails. Leaked tenants fill placement capacity and
+ * later runs fail with `NO_CAPACITY`. */
 import { afterAll, beforeAll } from "bun:test";
 import { createTestManagement, enabled } from "./helpers";
 

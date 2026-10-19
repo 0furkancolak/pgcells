@@ -1,4 +1,4 @@
-/** `pull`: canlı schema → başlangıç migration'ı → tenant schema'sında aynı yapı; farklı schema farklı özet; desteklenmeyen nesneler. */
+/** `pull`: live schema → initial migration → the same structure in a tenant schema; a different schema gives a different digest; unsupported objects. */
 import { afterAll, beforeAll, expect } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -19,7 +19,7 @@ afterAll(async () => {
   if (app) await app.close();
 });
 
-/** Eski uygulamanın bir tenant schema'sı: enum, identity, yabancı anahtar, CHECK, kısmi ifade index'i ve Drizzle ledger'ı. */
+/** A tenant schema of the old application: enum, identity, foreign key, CHECK, partial expression index and the Drizzle ledger. */
 const legacySchema = (schema: string) => `CREATE SCHEMA ${q(schema)};
 CREATE TYPE ${q(schema, "task_status")} AS ENUM ('TODO', 'DONE');
 CREATE TABLE ${q(schema, "users")} (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), email varchar(255) NOT NULL, created_at timestamp(3) with time zone DEFAULT now() NOT NULL, tags text[] DEFAULT '{}'::text[]);

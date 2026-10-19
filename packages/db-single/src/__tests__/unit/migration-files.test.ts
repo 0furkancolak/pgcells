@@ -25,12 +25,12 @@ test("files need exactly --up then --down; empty down is irreversible; checksum 
     "--down\nDROP TABLE a;\n--up\nCREATE TABLE a (id uuid);",
     "--up\nCREATE TABLE a (id uuid);\n--up\n--down\n",
     "--up\nCREATE TABLE a (id uuid);\n--todo\n--down\n",
-    "-- başlık\n--up\nCREATE TABLE a (id uuid);\n--down\n",
+    "-- title\n--up\nCREATE TABLE a (id uuid);\n--down\n",
   ])
     expect(() => one(source), source).toThrow(/--up/);
-  const reversible = one("--up\nCREATE TABLE a (id uuid);\n--down\n-- yorum\nDROP TABLE a;\n");
-  expect(reversible?.down?.bind(schema)).toEqual([`\n-- yorum\nDROP TABLE "${schema}".a;\n`]);
-  expect(one("--up\nCREATE TABLE a (id uuid);\n--down\n-- yalnızca yorum\n")?.down).toBeUndefined();
+  const reversible = one("--up\nCREATE TABLE a (id uuid);\n--down\n-- comment\nDROP TABLE a;\n");
+  expect(reversible?.down?.bind(schema)).toEqual([`\n-- comment\nDROP TABLE "${schema}".a;\n`]);
+  expect(one("--up\nCREATE TABLE a (id uuid);\n--down\n-- comment only\n")?.down).toBeUndefined();
   expect(one("--up\nCREATE TABLE a (id uuid);\n--down\n")?.checksum).not.toBe(one("--up\nCREATE TABLE a (id uuid);\n--down\n\n")?.checksum);
   expect(() => one("--up\n\n--down\n")).toThrow(/20260915143012_x: SQL_UNSUPPORTED/);
   for (const id of ["0001_initial", "20260915143012_Bad", "2026091514301_short"])
@@ -103,12 +103,12 @@ test("createMigration writes the template with the injected time and regenerates
     expect(await Bun.file(join(root, "src/migrations/index.gen.ts")).text()).toContain(
       'import m0 from "./20260915143012_create_students.sql" with { type: "text" };',
     );
-    // Aynı saniye (ya da son dosyanın gerisinde kalan saat) ID sırasını bozardı.
+    // The same second (or a clock lagging behind the last file) would break the ID order.
     await expect(createMigration({ name: "again", root, now })).rejects.toMatchObject({ code: "MIGRATION_INVALID" });
     for (const name of ["CreateStudents", "create-students", "1st", ""])
       await expect(createMigration({ name, root, now })).rejects.toMatchObject({ code: "USAGE" });
     expect((await readdir(join(root, "src/migrations"))).sort()).toEqual(["20260915143012_create_students.sql", "index.gen.ts"]);
-    // Boş şablon listelenir ama geçerli SQL değildir: tam codegen dosyayı adıyla bildirir.
+    // An empty template is listed but is not valid SQL: the full codegen reports the file by name.
     await expect(codegen(root)).rejects.toThrow(/20260915143012_create_students: SQL_UNSUPPORTED/);
     await Bun.write(
       join(root, "src/migrations/20260915143012_create_students.sql"),
@@ -150,7 +150,7 @@ test("createSeed writes SQL or TS templates and codegen lists TS seeds with thei
     expect(list).toContain('import m0 from "./20260915143012_demo_users";');
     expect(list).toMatch(/\["20260915143012_demo_users", \{ checksum: "[0-9a-f]{64}", run: m0 \}\]/);
     expect(list).toContain('import m1 from "./20260915143013_courses.sql" with { type: "text" };');
-    // Yalnızca yorum içeren SQL şablonu, DML yazılana kadar derlenmez.
+    // A SQL template containing only comments does not compile until DML is written.
     await expect(codegen(root)).rejects.toThrow(/20260915143013_courses/);
     await Bun.write(join(root, "src/seeds/20260915143013_courses.sql"), "DELETE FROM courses;\n");
     expect([...(await codegen(root)).keys()]).toEqual(["src/seeds/index.gen.ts"]);

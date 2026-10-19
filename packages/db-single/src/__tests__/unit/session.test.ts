@@ -5,7 +5,7 @@ import { MIGRATION_KEY, openSession } from "../../core/locks";
 import { fakeDriver, type Handler } from "../fixtures/fake-driver";
 
 let port = 7000;
-/** Doğrudan bağlantı sonucu URL başına önbelleğe alınır: her test yeni bir URL kullanır. */
+/** The direct-connection result is cached per URL: each test uses a new URL. */
 function management(handler: Handler) {
   const fake = fakeDriver(handler);
   const app = createManagement(createConfig(`postgres://admin@127.0.0.1:${port++}/app`), { driver: fake.driver });
@@ -56,7 +56,7 @@ test("a driver-reported close rejects pending and later queries and never reconn
 });
 
 test("the migration lock is exclusive per connection and busy for a second holder, and release frees it", async () => {
-  // `pg_locks` sorgusu da `pg_backend_pid()` içerir: önce o denetlenir.
+  // The `pg_locks` query also contains `pg_backend_pid()`: it is checked first.
   const { app } = management((text, _params, pool) => {
     if (text.includes("pg_locks")) return [{ pid: 301, held: true }];
     if (text.includes("pg_try_advisory_lock")) return [{ locked: true }];
@@ -73,15 +73,15 @@ test("the migration lock is exclusive per connection and busy for a second holde
   await app.close();
 });
 
-/** bun-types `advanceTimersByTime`'ı bildirmez; çalışma zamanında vardır. */
+/** bun-types does not declare `advanceTimersByTime`; it exists at runtime. */
 const advance = (ms: number) => (jest as unknown as { advanceTimersByTime(ms: number): void }).advanceTimersByTime(ms);
 
-/** Sahte zamanlayıcı altında mikro görevleri boşaltır. */
+/** Drains microtasks under the fake timer. */
 const flush = async () => {
   for (let i = 0; i < 20; i++) await Promise.resolve();
 };
 
-/** `SELECT slow` 40 sn sonra cevap veren oturum; `watchdogMs` verilirse watchdog genişler. */
+/** Session whose `SELECT slow` answers after 40 s; if `watchdogMs` is given, the watchdog is widened. */
 async function slowSession(watchdogMs?: number) {
   const { app } = management((text, _params, pool) => {
     if (text.includes("pg_backend_pid")) return [{ pid: 400 + pool.index }];
@@ -129,7 +129,7 @@ test("an unreachable database surfaces the driver's own code even when the drive
   const app = createManagement(createConfig(`postgres://admin@127.0.0.1:${port++}/app`), {
     driver: (url, options) => {
       const pool = fake.driver(url, options);
-      // İlk havuz yönetim bağlamının birincilidir; ikincisi oturumun ayrılmış bağlantısıdır (Bun: onclose, reserve reddinden önce gelir).
+      // The first pool is the management context's primary; the second is the session's reserved connection (Bun: onclose comes before the reserve rejection).
       if (++opened < 2) return pool;
       return {
         ...pool,
@@ -162,7 +162,7 @@ test("a failing direct-connection probe surfaces only the driver code, never its
   await app.close();
 });
 
-/** Kapanışı host/kullanıcı içeren ham bir mesajla reddeden havuzlar (`only` ile seçilir); `handler` verilmezse doğrudan bağlantı. */
+/** Pools whose close rejects with a raw message containing host/user (selected via `only`); without `handler`, a direct connection. */
 function failingClose(only: (options: { idleTimeoutSeconds?: number }) => boolean, handler: Handler = (text, _params, pool) => (text.includes("pg_backend_pid") ? [{ pid: 100 + pool.index }] : [])) {
   const fake = fakeDriver(handler);
   const driver: typeof fake.driver = (url, options) => ({

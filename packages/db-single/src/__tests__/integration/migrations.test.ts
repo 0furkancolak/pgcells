@@ -139,7 +139,7 @@ integration("a second run while the migration lock is held is MIGRATION_RUNNER_B
   });
 });
 
-// Kilidi tutan bağlantı ölünce (sunucu backend'i sonlandırır) advisory lock düşer; bir sonraki çalıştırma beklemeden devam eder.
+// When the connection holding the lock dies (the server terminates the backend), the advisory lock is released; the next run continues without waiting.
 integration("a busy run leaves the ledger intact, and a dead lock holder does not block the next run", async () => {
   await withManagement(async (m, schema, admin) => {
     await runner.migrate(m);
@@ -147,10 +147,10 @@ integration("a busy run leaves the ledger intact, and a dead lock holder does no
     try {
       expect(await failure(runner.rollback(m))).toBe("MIGRATION_RUNNER_BUSY");
       expect((await rows(admin, schema, "_migrations")).map((row) => row.id)).toEqual(IDS);
-      // Zaman aşımlı biçim backend gerçekten çıkana kadar bekler: kilit bir sonraki çalıştırmadan önce düşmüş olur.
+      // The timed form waits until the backend has really exited: the lock is released before the next run.
       await admin.query("SELECT pg_catalog.pg_terminate_backend($1, 5000)", [held.pid]);
       expect(await runner.rollback(m)).toEqual({ dryRun: false, migrations: [IDS[2]] });
-      // Ölü oturum yeniden bağlanmaz: ilk sorgu bağlantı hatasıyla düşer, sonrakiler kilidin kaybını söyler.
+      // A dead session does not reconnect: the first query fails with a connection error, and later ones report the lost lock.
       await held.db.query("SELECT 1").catch(() => {});
       expect(await failure(held.db.query("SELECT 1"))).toBe("LOCK_LOST");
     } finally {
@@ -212,7 +212,7 @@ integration("an aborted signal stops before taking the lock", async () => {
   });
 });
 
-/** Yarıda kalmış CONCURRENTLY adımının tekrar denemeleri: önce ilk iki migration, sonra index elle hazırlanır. */
+/** Retries of an interrupted CONCURRENTLY step: the first two migrations run first, then the index is prepared by hand. */
 async function withIndex(prepare: (admin: Database, schema: string) => Promise<void>, work: (m: Management, schema: string, admin: Database) => Promise<void>) {
   await withManagement(async (m, schema, admin) => {
     await createRunner({ migrations: migrations.slice(0, 2), seeds: [] }).migrate(m);

@@ -91,7 +91,7 @@ integration("transactional migration failure rolls back DDL and ledger", async (
   const id = `${prefix}-partial`;
   const p = await app.platform.create(id, "db0");
   const db = app.pools.node(p.databaseId);
-  // İlk migration `users`'ı önce, `teachers`'ı sonra kurar: çakışan `teachers` onu yarıda düşürür.
+  // The first migration creates `users` first, `teachers` second: the colliding `teachers` drops it halfway.
   await db.exec(`CREATE SCHEMA ${q(p.schemaName)}; CREATE TABLE ${q(p.schemaName, "teachers")} (id uuid PRIMARY KEY)`);
   await expect(provisionTenant(app, id, p.databaseId)).rejects.toThrow();
   expect(
@@ -191,8 +191,8 @@ integration("target reservation must match both operation and schema", async () 
       expect((await app.platform.get(id)).status).toBe("active");
     }
   } finally {
-    // Paylaşılan DB'de yarım taşıma kalmasın (sonraki dosyalarda doctor ve migrate-all onu hata sayar): sahte rezervasyon silinir,
-    // taşıma geri alınır.
+    // Leave no half-finished move in the shared DB (doctor and migrate-all in later files count it as an error): the fake reservation is deleted,
+    // the move is rolled back.
     await target.query("DELETE FROM platform.move_targets WHERE tenant_id=$1", [id]);
     await rollbackMove(app, moveId, drained);
   }

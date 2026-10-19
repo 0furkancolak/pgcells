@@ -14,7 +14,7 @@ function fixture(options: { broken?: boolean; pooled?: boolean; identity?: strin
     if (overridden) return overridden;
     if (options.broken) throw new Error(`credentials leaked: ${pool.url}`);
     if (text.includes("pg_backend_pid")) {
-      // Runtime URL'si sınaması: aynı havuzda iki bağlantı; pooler tek oturum, doğrudan her sorguda yeni oturum.
+      // Runtime URL probe: two connections in the same pool; a pooler gives a single session, a direct connection a new session per query.
       if (pool.url.includes("pooler.example")) return [{ pid: 7 }];
       if (pool.url.includes("direct.example")) return [{ pid: ++runtimePid }];
       return [{ pid: options.pooled ? 1 : 100 + pool.index }];

@@ -1,4 +1,4 @@
-/** Tenant yer seçimi (boyut, kapasite, draining), bütün DB'lerde schema tekilliği, ayrılmış ID'ler ve DB hazırlığı (gerçek PostgreSQL). */
+/** Tenant placement (size, capacity, draining), schema uniqueness across all DBs, reserved IDs and DB readiness (real PostgreSQL). */
 import { afterAll, beforeAll, expect } from "bun:test";
 import { createConfig } from "../../core/config";
 import { createManagement } from "../../core/management";

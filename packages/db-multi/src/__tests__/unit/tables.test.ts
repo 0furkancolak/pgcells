@@ -130,7 +130,7 @@ test("generated repository tables parse driver values", () => {
   const id = crypto.randomUUID();
   const user = { id, name: "Ada", email: "ada@x", emailVerified: true, image: null, twoFactorEnabled: null, createdAt: new Date(0), updatedAt: new Date(0) };
   expect(userRow.parse(user)).toEqual(user);
-  // Varsayılanı olan sütunlar (id dahil: gen_random_uuid()) insert şemasında isteğe bağlıdır.
+  // Columns with a default (including id: gen_random_uuid()) are optional in the insert schema.
   expect(userInsert.parse({ name: "Ada", email: "ada@x" })).toEqual({ name: "Ada", email: "ada@x" });
   expect(() => userRow.parse({ ...user, id: "not-a-uuid" })).toThrow();
   expect(() => userRow.parse({ ...user, emailVerified: undefined })).toThrow();

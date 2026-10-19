@@ -1,6 +1,6 @@
-/** run.ts (yük) ve scale.ts (veri, migration, seed, move) için ortak benchmark altyapısı: kaynak limitli Docker konteynerleri,
- * PostgreSQL konteyneri içinde psql, docker stats / PgBouncer örnekleyicileri, k6 çağrıları ve sonuç dosyaları.
- * Yalnızca test kodu; buradaki hiçbir şey paket API'si değildir. */
+/** Shared benchmark infrastructure for run.ts (load) and scale.ts (data, migrations, seeds, move): resource-limited Docker containers,
+ * psql inside the PostgreSQL container, docker stats / PgBouncer samplers, k6 calls and result files.
+ * Test code only; nothing here is package API. */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -9,7 +9,7 @@ export const BENCH_DIR = import.meta.dir;
 export const PACKAGE_DIR = resolve(BENCH_DIR, "../../..");
 export const REPO_DIR = resolve(PACKAGE_DIR, "../..");
 export const RESULTS_DIR = join(BENCH_DIR, "results");
-/** Ham k6 özetleri, örnekler, loglar ve geçici paket kopyaları (asla commit edilmez). */
+/** Raw k6 summaries, samples, logs and temporary package copies (never committed). */
 export const RAW_DIR = process.env.BENCH_RAW_DIR ?? join(tmpdir(), "repo-db-bench");
 
 export const IMAGES = { postgres: "postgres:16.15-alpine", bun: "oven/bun:1.3.14-alpine", pgbouncer: "repo-db-bench-pgbouncer" };
@@ -19,9 +19,9 @@ export const APP_URL = `http://127.0.0.1:${PORTS.app}`;
 const USER = "admin";
 const PASSWORD = "bench_password";
 export const AUTH_SECRET = "bench-only-better-auth-secret-0123456789";
-/** Tek PostgreSQL sunucusu iki tenant veritabanını da barındırır (db0 = platform + tenant'lar, db1 = tenant'lar): bir tier = bir konteyner. */
+/** A single PostgreSQL server hosts both tenant databases (db0 = platform + tenants, db1 = tenants): one tier = one container. */
 export const directUrls = () => ["db0", "db1"].map((db) => `postgres://${USER}:${PASSWORD}@127.0.0.1:${PORTS.pg}/${db}`);
-/** Host'tan görülen PgBouncer (compare.ts süreç içi ölçümleri). */
+/** PgBouncer as seen from the host (compare.ts in-process measurements). */
 export const bouncerUrls = () => ["db0", "db1"].map((db) => `postgres://${USER}:${PASSWORD}@127.0.0.1:${PORTS.bouncer}/${db}`);
 const pooledUrls = ["db0", "db1"].map((db) => `postgres://${USER}:${PASSWORD}@${NAMES.bouncer}:5432/${db}`).join(",");
 
@@ -39,7 +39,7 @@ const pgSettings = (sharedBuffers: number, cache: number, maintenance: number, w
   "max_connections=100",
   "max_wal_size=2GB",
 ];
-/** PostgreSQL limitleri; shared_buffers = konteyner belleğinin %25'i. */
+/** PostgreSQL limits; shared_buffers = 25% of the container memory. */
 export const TIERS: Record<TierName, Tier> = {
   T1: { cpus: 0.25, memoryMb: 256, settings: pgSettings(64, 160, 32, 2) },
   T2: { cpus: 0.5, memoryMb: 512, settings: pgSettings(128, 320, 64, 4) },
@@ -47,41 +47,41 @@ export const TIERS: Record<TierName, Tier> = {
   T4: { cpus: 2, memoryMb: 1536, settings: pgSettings(384, 1024, 256, 8) },
 };
 export const APP_LIMITS = { cpus: 2, memoryMb: 512 };
-/** min_pool_size = default_pool_size ve server_round_robin = 1: tüm sunucu backend'leri baştan vardır ve eşit ısınır, böylece üst
- * rung soğuk backend getirmez (PgBouncer'ın varsayılan LIFO yeniden kullanımı düşük hızlarda backend'lerin çoğunu boşta bırakır). */
+/** min_pool_size = default_pool_size and server_round_robin = 1: all server backends exist from the start and warm up evenly, so the top
+ * rung does not bring in cold backends (PgBouncer's default LIFO reuse leaves most backends idle at low rates). */
 export const BOUNCER_LIMITS = { cpus: 0.5, memoryMb: 64, defaultPoolSize: 10, minPoolSize: 10, serverRoundRobin: 1, maxClientConn: 1000 };
 export const SLO = { p95Ms: 50, errorRate: 0.01, minAchieved: 0.95 };
 
-/** Deterministik kullanıcı id'leri 1..n; veri üretimi, düzenek ve k6 ortak kullanır. */
+/** Deterministic user ids 1..n; shared by data generation, the harness and k6. */
 export const uuidOf = (i: number) => {
   const h = i.toString(16).padStart(32, "0");
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 };
 export const tenantName = (i: number) => `t${String(i).padStart(5, "0")}`;
 export const demoName = (i: number) => `demo-${i}`;
-/** Tenant id için HTTP Host başlığı (düzenek `<id>.bench.test` çözer). */
+/** HTTP Host header for a tenant id (the harness resolves `<id>.bench.test`). */
 export const BENCH_ROOT = "bench.test";
 export const hostOf = (tenantId: string) => `${tenantId}.${BENCH_ROOT}`;
 
 export const log = (...parts: unknown[]) => console.error(`[${new Date().toISOString().slice(11, 19)}]`, ...parts);
 export const round = (value: number | undefined, digits = 2) => (value === undefined || !Number.isFinite(value) ? undefined : Number(value.toFixed(digits)));
 export const stamp = () => new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19) + "Z";
-/** Virgülle ayrılmış bayrak değeri → kırpılmış, boş olmayan parçalar. */
+/** Comma-separated flag value → trimmed, non-empty parts. */
 export const list = (value = "") => value.split(",").map((v) => v.trim()).filter(Boolean);
-/** `work` süresi (ms). */
+/** Duration of `work` (ms). */
 export async function timeIt(work: () => Promise<unknown>) {
   const t = performance.now();
   await work();
   return performance.now() - t;
 }
-/** Hatanın mesajı (Error değilse String); `max` verilirse o uzunlukta kesilir. */
+/** The error's message (String if not an Error); truncated to that length if `max` is given. */
 export function messageOf(error: unknown, max?: number) {
   const message = error instanceof Error ? error.message : String(error);
   return max === undefined ? message : message.slice(0, max);
 }
 
 type Run = { ok: boolean; code: number; out: string; err: string };
-/** Senkron komut; `allowFail` yoksa stderr kuyruğuyla hata fırlatır. */
+/** Synchronous command; throws with the stderr tail unless `allowFail`. */
 export function sh(cmd: string[], { input, allowFail = false, cwd }: { input?: string; allowFail?: boolean; cwd?: string } = {}): Run {
   const proc = Bun.spawnSync(cmd, { cwd, stdin: input === undefined ? "ignore" : Buffer.from(input), stdout: "pipe", stderr: "pipe" });
   const run = { ok: proc.exitCode === 0, code: proc.exitCode ?? -1, out: proc.stdout.toString().trim(), err: proc.stderr.toString().trim() };
@@ -94,7 +94,7 @@ export async function shAsync(cmd: string[], { input, cwd, env }: { input?: stri
   return { ok: code === 0, code, out, err };
 }
 
-/** `work`'ü `items` üzerinde aynı anda en fazla `concurrency` iş olacak şekilde çalıştırır. */
+/** Runs `work` over `items` with at most `concurrency` jobs at the same time. */
 export async function eachLimit<T>(items: readonly T[], concurrency: number, work: (item: T, index: number) => Promise<void>) {
   let next = 0;
   await Promise.all(
@@ -107,7 +107,7 @@ export async function eachLimit<T>(items: readonly T[], concurrency: number, wor
   );
 }
 
-/** En yakın sıra (nearest-rank) yüzdelikleri, ms. */
+/** Nearest-rank percentiles, ms. */
 export function distribution(values: number[]) {
   const sorted = [...values].sort((a, b) => a - b);
   const at = (p: number) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(p * sorted.length) - 1))];
@@ -122,7 +122,7 @@ export function containerState(name: string) {
   const [status = "", oom, restarts, exitCode] = r.out.split(" ");
   return { status, oomKilled: oom === "true", restarts: Number(restarts), exitCode: Number(exitCode) };
 }
-/** Nazik durdurma (`docker stop -t 60`, asla kill yok), ardından konteyneri siler; volume'lar kalır. */
+/** Graceful stop (`docker stop -t 60`, never kill), then removes the container; volumes stay. */
 export function stopContainer(name: string) {
   if (!containerState(name)) return;
   sh(["docker", "stop", "-t", "60", name], { allowFail: true });
@@ -135,26 +135,26 @@ function ensureNetwork() {
   if (!sh(["docker", "network", "inspect", NAMES.network], { allowFail: true }).ok) sh(["docker", "network", "create", NAMES.network]);
 }
 const limits = (cpus: number, memoryMb: number) => [`--cpus=${cpus}`, `--memory=${memoryMb}m`, `--memory-swap=${memoryMb}m`];
-/** Çalışan konteynerin cgroup v2 `oom_kill` sayacı (çalışmıyorsa undefined). */
+/** The running container's cgroup v2 `oom_kill` counter (undefined if not running). */
 export function oomKills(name: string) {
   const r = sh(["docker", "exec", name, "cat", "/sys/fs/cgroup/memory.events"], { allowFail: true });
   const match = r.ok ? /^oom_kill (\d+)$/m.exec(r.out) : null;
   return match ? Number(match[1]) : undefined;
 }
 
-/** `storage`: adlandırılmış volume ya da mutlak host yolu (bind mount; ör. 1B koşusu için harici disk). */
+/** `storage`: a named volume or an absolute host path (bind mount; e.g. an external disk for the 1B run). */
 export async function startPostgres(tier: TierName, storage: string) {
   stopContainer(NAMES.pg);
   ensureNetwork();
   const { cpus, memoryMb, settings } = TIERS[tier];
   sh([
     "docker", "run", "-d", "--name", NAMES.pg, "--network", NAMES.network, "-p", `127.0.0.1:${PORTS.pg}:5432`, ...limits(cpus, memoryMb),
-    // /dev/shm = konteyner belleği (aynı cgroup'tan düşer): 128m, T4'te paralel VACUUM'u düşürdü (DSM resize).
+    // /dev/shm = container memory (counted against the same cgroup): 128m broke parallel VACUUM on T4 (DSM resize).
     `--shm-size=${memoryMb}m`, "-e", `POSTGRES_USER=${USER}`, "-e", `POSTGRES_PASSWORD=${PASSWORD}`, "-e", "POSTGRES_DB=db0",
     "-v", `${storage}:/var/lib/postgresql/data`, IMAGES.postgres, "postgres", ...settings.flatMap((s) => ["-c", s]),
   ]);
   const started = Date.now();
-  // TCP hazır olma kontrolü: imajın init sırasındaki sunucusu yalnızca socket üzerinden dinler.
+  // TCP readiness check: the image's init-time server listens on the socket only.
   while (!psqlTry("db0", "SELECT 1")) {
     if (containerState(NAMES.pg)?.status !== "running") throw new Error(`PostgreSQL exited: ${sh(["docker", "logs", "--tail", "30", NAMES.pg], { allowFail: true }).err}`);
     if (Date.now() - started > 900_000) throw new Error("PostgreSQL not ready after 15 min");
@@ -205,19 +205,19 @@ export async function startApp(driver: string, poolMax: number) {
 export const appMetrics = async () =>
   (await fetch(`${APP_URL}/metrics`).then((r) => r.json()).catch(() => undefined)) as { rssMiB: number; heapUsedMiB: number; errors: Record<string, number>; requests: number } | undefined;
 
-/** `sinceIso`'dan beri `docker logs` içinde öldürülmüş ya da çökmüş PostgreSQL backend'i gösteren satırlar. */
+/** Lines in `docker logs` since `sinceIso` that show a killed or crashed PostgreSQL backend. */
 export function crashLines(name: string, sinceIso: string) {
   const r = sh(["docker", "logs", "--since", sinceIso, name], { allowFail: true });
   return `${r.out}\n${r.err}`.split("\n").filter((line) => /terminated by signal|out of memory|server process .* was terminated|PANIC|FATAL: .*recovery/i.test(line));
 }
 
-// ---- psql ve sunucu istatistikleri ---------------------------------------------
+// ---- psql and server statistics ------------------------------------------------
 
 const psqlCmd = (db: string, extra: string[]) => [
   "docker", "exec", "-i", "-e", `PGPASSWORD=${PASSWORD}`, "-e", "PGOPTIONS=-c statement_timeout=0 -c lock_timeout=0", NAMES.pg,
   "psql", "-h", "127.0.0.1", "-U", USER, "-d", db, "-AtXq", "-v", "ON_ERROR_STOP=1", ...extra,
 ];
-/** PostgreSQL konteyneri içinde, çalışma zamanı timeout varsayılanları olmadan admin SQL. Paketi bilerek atlar. */
+/** Admin SQL inside the PostgreSQL container, without the runtime timeout defaults. Deliberately bypasses the package. */
 export const psql = (db: string, sql: string) => sh(psqlCmd(db, ["-c", sql])).out;
 export const psqlTry = (db: string, sql: string) => sh(psqlCmd(db, ["-c", sql]), { allowFail: true }).ok;
 export async function psqlScript(db: string, script: string) {
@@ -259,12 +259,12 @@ export function dataDirSize() {
   return { dataDirMiB: round(kb("/var/lib/postgresql/data") / 1024), walMiB: round(kb("/var/lib/postgresql/data/pg_wal") / 1024) };
 }
 
-// ---- Örnekleyiciler ----------------------------------------------------------------
+// ---- Samplers ----------------------------------------------------------------------
 
 export type StatSample = { t: number; name: string; cpuPct: number; memMiB: number };
 const UNITS: Record<string, number> = { B: 1 / 1048576, KiB: 1 / 1024, kB: 1 / 1024, MiB: 1, MB: 1, GiB: 1024, GB: 1024 };
 const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[A-Za-z]`, "g");
-/** `docker stats` akışı (konteyner başına saniyede yaklaşık bir örnek). CPU% çekirdek başınadır: 100 = bir tam çekirdek. */
+/** `docker stats` stream (about one sample per second per container). CPU% is per core: 100 = one full core. */
 export function startStats(names: string[]) {
   const samples: StatSample[] = [];
   const proc = Bun.spawn(["docker", "stats", "--format", "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}", ...names], { stdout: "pipe", stderr: "ignore" });
@@ -303,7 +303,7 @@ export function resourceSummary(samples: StatSample[], from: number, to: number)
 }
 
 export type PoolSample = { t: number; clActive: number; clWaiting: number; svActive: number; svIdle: number; maxWaitMs: number };
-/** Her `intervalMs`'de db0/db1 için SHOW POOLS. */
+/** SHOW POOLS for db0/db1 every `intervalMs`. */
 export function startPoolPoller(intervalMs = 2000) {
   const rows: PoolSample[] = [];
   let running = true;
@@ -327,7 +327,7 @@ export function poolSummary(rows: PoolSample[], from: number, to: number) {
   const max = (key: keyof PoolSample) => Math.max(...window.map((r) => r[key]));
   return { maxClWaiting: max("clWaiting"), maxSvActive: max("svActive"), maxWaitMs: round(max("maxWaitMs"), 1), n: window.length };
 }
-/** db0+db1 için PgBouncer SHOW STATS farkı: sorgular, transaction'lar ve istemcinin sunucu bağlantısı için ortalama beklemesi. */
+/** PgBouncer SHOW STATS delta for db0+db1: queries, transactions, and the client's average wait for a server connection. */
 export function bouncerDelta(before: Record<string, string>[], after: Record<string, string>[]) {
   const total = (rows: Record<string, string>[], key: string) =>
     rows.filter((r) => r.database === "db0" || r.database === "db1").reduce((n, r) => n + Number(r[key] ?? 0), 0);
@@ -340,7 +340,7 @@ export function bouncerDelta(before: Record<string, string>[], after: Record<str
 
 export type K6Values = Record<string, number>;
 export type K6Summary = { metrics: Record<string, { values: K6Values }> };
-/** k6/load.js'in tek bir k6 koşusu. PLAN, [rps, seconds] segmentlerinden oluşan JSON listesidir; çıkış kodu 99 (eşik aşıldı) beklenir. */
+/** A single k6 run of k6/load.js. PLAN is a JSON list of [rps, seconds] segments; exit code 99 (threshold crossed) is expected. */
 export async function k6(env: Record<string, string | number>, summaryPath: string): Promise<K6Summary> {
   mkdirSync(dirname(summaryPath), { recursive: true });
   const vars = Object.entries({ BASE_URL: APP_URL, ...env, SUMMARY_PATH: summaryPath }).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
@@ -350,7 +350,7 @@ export async function k6(env: Record<string, string | number>, summaryPath: stri
   if (![0, 99].includes(r.code) || !existsSync(summaryPath)) throw new Error(`k6 failed (${r.code}): ${(r.err || r.out).slice(-1500)}`);
   return JSON.parse(readFileSync(summaryPath, "utf8")) as K6Summary;
 }
-/** `index` numaralı plan segmentinin metrikleri (etiket seg:sNNN). `previousRate`: bu segmente giden 1 s rampanın başladığı hız. */
+/** Metrics of the plan segment numbered `index` (tag seg:sNNN). `previousRate`: the rate at which the 1 s ramp into this segment started. */
 export function segment(summary: K6Summary, index: number, rate: number, seconds: number, previousRate: number) {
   const tag = `seg:s${String(index).padStart(3, "0")}`;
   const d = summary.metrics[`http_req_duration{${tag}}`]?.values ?? {};
@@ -364,7 +364,7 @@ export function segment(summary: K6Summary, index: number, rate: number, seconds
   };
 }
 
-// ---- Ortam ve sonuçlar ---------------------------------------------------
+// ---- Environment and results ---------------------------------------------
 
 export function environment() {
   const out = (cmd: string[]) => sh(cmd, { allowFail: true }).out;
@@ -390,11 +390,11 @@ export function saveResult(file: string, data: unknown) {
 }
 export const loadResult = <T>(file: string): T | undefined => (existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as T) : undefined);
 
-/** Sunucu tarafında `users` satırı üretimi (paket API'sini bilerek atlar; test edilen sorgular API'den geçer). Id'ler 1..n
- * deterministiktir (`uuidOf`); e-posta sıra numarasından türetilir (benzersiz). */
+/** Server-side generation of `users` rows (deliberately bypasses the package API; the tested queries go through the API). Ids are 1..n,
+ * deterministic (`uuidOf`); the email is derived from the sequence number (unique). */
 export function rowsSql(schema: string, from: number, to: number, idempotent = false) {
   const conflict = idempotent ? " ON CONFLICT DO NOTHING" : "";
   return `INSERT INTO "${schema}".users (id, name, email) SELECT lpad(to_hex(g), 32, '0')::uuid, 'user-' || lpad(g::text, 10, '0'), 'user-' || g || '@bench.test' FROM generate_series(${from}, ${to}) g${conflict};`;
 }
-/** Düzenek ve karşılaştırmalardaki tek satırlık kullanıcı insert'ü için benzersiz e-posta. */
+/** Unique email for the single-row user insert in the harness and comparisons. */
 export const benchEmail = (id: string) => `${id}@bench.test`;

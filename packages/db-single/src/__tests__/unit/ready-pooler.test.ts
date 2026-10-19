@@ -5,7 +5,7 @@ import { fakeDriver } from "../fixtures/fake-driver";
 
 const url = "postgres://app:secret-pw@localhost:6432/one";
 
-/** `pid()` her `pg_backend_pid` sorgusunun cevabıdır; `SELECT 1` ulaşılabilirlik sınamasıdır. */
+/** `pid()` is the answer to every `pg_backend_pid` query; `SELECT 1` is the reachability check. */
 function fixture(pid: () => number | Error, reachable: () => void = () => {}) {
   const fake = fakeDriver((text) => {
     if (text.includes("pg_backend_pid")) {

@@ -91,7 +91,7 @@ integration("NOWAIT and SKIP LOCKED contend across two live tenant transactions"
     // A setup failure must reject readiness instead of leaving this test waiting.
     await Promise.race([ready, holding]);
     await context(contender, schema)("sql-extensions", async (tenant) => {
-      // `samples` migration tablosu değil: `*` derlemede reddedilir (camelCase çıktı adları için sütunlar bilinmeli), sütun açıkça yazılır.
+      // `samples` is not a migration table: `*` is rejected at compile time (columns must be known for camelCase output names), so the columns are written out.
       expect(() => tenant.query(prepareQuery("SELECT id FROM samples FOR UPDATE"))).toThrow("transaction");
       expect(
         await failure(

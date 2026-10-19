@@ -27,12 +27,12 @@ test("files need exactly --up then --down; empty down is irreversible; checksum 
     "--down\nDROP TABLE a;\n--up\nCREATE TABLE a (id uuid);",
     "--up\nCREATE TABLE a (id uuid);\n--up\n--down\n",
     "--up\nCREATE TABLE a (id uuid);\n--todo\n--down\n",
-    "-- başlık\n--up\nCREATE TABLE a (id uuid);\n--down\n",
+    "-- title\n--up\nCREATE TABLE a (id uuid);\n--down\n",
   ])
     expect(() => one(source), source).toThrow(/--up/);
-  const reversible = one("--up\nCREATE TABLE a (id uuid);\n--down\n-- yorum\nDROP TABLE a;\n");
-  expect(reversible?.down?.bind(schema)).toEqual([`\n-- yorum\nDROP TABLE "${schema}".a;\n`]);
-  expect(one("--up\nCREATE TABLE a (id uuid);\n--down\n-- yalnızca yorum\n")?.down).toBeUndefined();
+  const reversible = one("--up\nCREATE TABLE a (id uuid);\n--down\n-- comment\nDROP TABLE a;\n");
+  expect(reversible?.down?.bind(schema)).toEqual([`\n-- comment\nDROP TABLE "${schema}".a;\n`]);
+  expect(one("--up\nCREATE TABLE a (id uuid);\n--down\n-- comment only\n")?.down).toBeUndefined();
   expect(one("--up\nCREATE TABLE a (id uuid);\n--down\n")?.checksum).not.toBe(one("--up\nCREATE TABLE a (id uuid);\n--down\n\n")?.checksum);
   expect(() => one("--up\n\n--down\n")).toThrow(/20260915143012_x: SQL_UNSUPPORTED/);
   for (const id of ["0001_initial", "20260915143012_Bad", "2026091514301_short"])

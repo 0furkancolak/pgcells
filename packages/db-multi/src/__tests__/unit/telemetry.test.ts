@@ -1,4 +1,4 @@
-/** Telemetri: span'ler başlangıç zamanı ve hata koduyla bildirilir, bağdaştırıcı hatası işi düşürmez, OpenTelemetry/Sentry eşlemesi. */
+/** Telemetry: spans are reported with their start time and error code, an adapter error does not fail the work, OpenTelemetry/Sentry mapping. */
 import { expect, test } from "bun:test";
 import { createConfig } from "../../core/config";
 import { connect, type Span } from "../../core/database";
@@ -23,7 +23,7 @@ test("spans carry start time and error code; a throwing handler never breaks the
   await ok.query("SELECT 1");
   const failing = connect(pool(true), { deadlineMs: 1000, maxPending: 4, databaseId: "db1", onSpan: (span) => void spans.push(span) });
   await expect(failing.query("SELECT 1")).rejects.toMatchObject({ code: "TENANT_NOT_FOUND" });
-  // Her sorgu ayrılmış bağlantıda çalışır (deadline'ı dolarsa bağlantı atılabilsin): önce bağlantı bekleme span'i.
+  // Every query runs on a reserved connection (so it can be discarded if its deadline expires): connection-wait span first.
   expect(spans.map((s) => [s.name, s.databaseId, s.error, s.detail])).toEqual([
     ["db.acquire", "db1", undefined, undefined],
     ["db.query", "db1", undefined, "SELECT 1"],
@@ -58,7 +58,7 @@ test("OpenTelemetry and Sentry adapters map name, times, attributes and error st
     ["otel", "migration", 1_700_000_000_000],
     ["status", { code: 2, message: "23505" }],
     ["end", 1_700_000_000_012],
-    // db.query span'inde Sentry adı bağlı SQL metnidir (`detail`), op düz `db`.
+    // On the db.query span the Sentry name is the bound SQL text (`detail`), the op is plain `db`.
     ["sentry", "20260901083015_initial", "db"],
     ["end", 1_700_000_000_012],
   ]);

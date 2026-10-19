@@ -1,6 +1,6 @@
-/** `bun run verify:provider [--driver bun|postgres|pg|neon] [--replica]`: yönetilen Postgres'te A'nın sınamasını, `ALTER DATABASE SET`'i, yetkileri ve
- * deadline sonrası sunucu davranışını ölçer; `--replica` replica URL'lerini gizli girişle sorar ve lag ile standby ayarlarını da ölçer; yalnızca JSON basar. Yönetim URL'leri `DATABASE_URLS`'ten, runtime URL'leri gizli
- * girişten gelir (`doctor --pooled-urls` ile aynı biçim). Yalnızca geçici/ücretsiz test veritabanlarında çalıştırın. */
+/** `bun run verify:provider [--driver bun|postgres|pg|neon] [--replica]`: measures A's probe, `ALTER DATABASE SET`, privileges and
+ * post-deadline server behavior on managed Postgres; `--replica` prompts for replica URLs via hidden input and also measures lag and standby settings; prints JSON only. Management URLs come from `DATABASE_URLS`, runtime URLs come from hidden
+ * input (same format as `doctor --pooled-urls`). Run only against disposable/free test databases. */
 import { createConfig, loadConfig } from "../../core/config";
 import type { Driver } from "../../core/driver";
 import { AppError, errorCode } from "../../core/errors";
@@ -57,7 +57,7 @@ async function serverVersion(driver: Driver, url: string): Promise<string | null
   }
 }
 
-/** Düğüm başına ölçümleri sırayla çalıştırır (paralel değil: ölçümler aynı veritabanı ayarına dokunur). */
+/** Runs the per-node measurements in order (not in parallel: the measurements touch the same database setting). */
 export async function verify(
   driver: Driver,
   name: string,
@@ -84,7 +84,7 @@ export async function verify(
   return { generatedAt: now.toISOString(), driver: name, server: await serverVersion(driver, management[0] as string), nodes };
 }
 
-/** Hata tek satır JSON olarak yazılır: yığın izi ve sürücü mesajı (host, kullanıcı, parola) basılmaz. */
+/** The error is written as single-line JSON: no stack trace or driver message (host, user, password) is printed. */
 async function main() {
   try {
     const name = driverName(process.argv.slice(2));

@@ -75,7 +75,7 @@ test("DATABASE_REPLICA_URLS attaches replicas to databases by id; a repeated key
     ["db0", [replicaA, replicaB]],
     ["db1", [replicaC]],
   ]);
-  // URL içindeki `=` ve sorgu dizesi anahtarı bozmaz.
+  // `=` inside the URL and the query string do not corrupt the key.
   expect(config.nodes[0]?.replicas[1]).toBe(replicaB);
 });
 

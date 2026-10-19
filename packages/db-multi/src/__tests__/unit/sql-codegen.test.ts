@@ -21,7 +21,7 @@ test("each query file generates its own module with unique self-describing names
   expect(names.every((name) => /^[a-z][A-Za-z0-9]*$/.test(name))).toBe(true);
   expect(isPreparedQuery(auth.createPasswordUser)).toBe(true);
   expect(Object.isFrozen(auth.createPasswordUser)).toBe(true);
-  // Üretilen modül, `-- name:` satırı çıkarılmış kaynağın derleyici çıktısıyla aynı bağlanır.
+  // The generated module binds the same as the compiler output of the source with the `-- name:` line stripped.
   const source = (await Bun.file(join(import.meta.dir, "../../queries/tenant/auth.sql")).text()).replace(/^-- name: createPasswordUser\n/, "").trim();
   expect(auth.createPasswordUser.bind(schema)).toBe(prepareQuery(source).bind(schema));
   expect(() => auth.createPasswordUser.bind('x"; DROP SCHEMA public; --')).toThrow();

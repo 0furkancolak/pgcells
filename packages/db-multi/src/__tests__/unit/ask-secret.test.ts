@@ -1,10 +1,10 @@
-/** Gizli giriş: soru terminalde gösterilmez, her çıkış yolunda raw mod geri verilir ve URL doğrulaması değer sızdırmaz. */
+/** Hidden input: the question is not shown in the terminal, raw mode is restored on every exit path and URL validation does not leak the value. */
 import { expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { askSecret, postgresUrl } from "../../core/tools/ask-secret";
 
-/** Sahte terminal: raw mod çağrıları kaydedilir, yazılanlar `shown`'da birikir. */
+/** Fake terminal: raw-mode calls are recorded, written output accumulates in `shown`. */
 function fakeTerminal(isTTY: boolean) {
   const input = Object.assign(new PassThrough(), { isTTY, rawModes: [] as boolean[], setRawMode(raw: boolean) { input.rawModes.push(raw); } });
   const output = new PassThrough();
@@ -79,5 +79,5 @@ test.each(["SIGINT", "SIGTERM"])("%s while the hidden question is open cancels w
   signals.emit(signal);
   expect(await answer.then(() => "", (error: { code?: string }) => error.code)).toBe("USAGE");
   expect(term.input.rawModes).toEqual([true, false]);
-  expect(signals.listenerCount(signal)).toBe(0); // dinleyici bırakılmaz
+  expect(signals.listenerCount(signal)).toBe(0); // no listener is left behind
 });

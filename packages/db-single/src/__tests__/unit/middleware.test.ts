@@ -40,7 +40,7 @@ test("perRequest opens a one-connection pool per request and closes it after the
   expect(fake.pools.every((pool) => pool.options.max === 1 && pool.closed)).toBe(true);
 });
 
-/** Havuz kapanışı `release()` çağrılana kadar bekleyen sürücü; `fail`: kapanış hata verir. */
+/** Driver whose pool close waits until `release()` is called; `fail`: the close errors. */
 function slowClose(fail = false) {
   const fake = fakeDriver(handler);
   let release = () => {};
@@ -80,7 +80,7 @@ test("a failing close behind waitUntil neither changes the response nor leaves a
   await middleware(c, async () => {});
   release();
   await expect(waiting[0]).resolves.toBeUndefined();
-  // Hata gövdeden gelirse o olduğu gibi çıkar.
+  // An error coming from the body is propagated as is.
   const failing = slowClose();
   const again = { set: () => {}, executionCtx: { waitUntil: () => {} } };
   await expect(failing.middleware(again, async () => Promise.reject(new Error("handler failed")))).rejects.toThrow("handler failed");
@@ -111,7 +111,7 @@ test("reads go to the replica until the same request writes, then stay on the pr
   await scope.read.query(select, [1]);
   await scope.query(insert, [1]);
   await scope.read.query(select, [1]);
-  // Transaction içindeki yazı da sayılır.
+  // A write inside a transaction counts too.
   const tx = createDbScope(db);
   await tx.transaction(async (inner) => void (await inner.query(insert, [2])));
   await tx.read.query(select, [2]);

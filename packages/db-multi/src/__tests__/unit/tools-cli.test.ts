@@ -17,7 +17,7 @@ test("tool options: bounded sizes and counts, boolean --full, string lists and c
     keep: 7,
     batchSize: 250,
   });
-  // `--from-url` bir anahtardır: URL argv'ye yazılmaz, gizli girişle sorulur.
+  // `--from-url` is a switch: the URL is not written to argv, it is asked for via hidden input.
   expect(parseOptions(["--source", "legacy", "--on-conflict", "link", "--from-url"], ["--source", "--on-conflict", "--from-url"])).toEqual({
     source: "legacy",
     onConflict: "link",

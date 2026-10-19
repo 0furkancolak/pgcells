@@ -103,7 +103,7 @@ test("a schema that already has tables needs a baseline unless the tenant is alr
   const placement = (status: "active" | "provisioning") => new Map([["kadikoy", { placement: { databaseId: "db0", schemaName: "tenant_kadikoy", status } }]]);
   expect(codes([row("chitchat", "chitchat"), row("moda", "moda")], input)).toEqual([["blocked", "BASELINE_REQUIRED"], ["ready"]]);
   expect(plan([row("chitchat", "chitchat")], input, { baseline: "20260901083015_initial" })[0]?.status).toBe("ready");
-  // Yarım kalmış benimseme (yeniden adlandırılmış, etkin değil) de baseline ister; etkin olan tamamlanmıştır.
+  // An unfinished adoption (renamed, not active) also needs a baseline; an active one is complete.
   expect(codes([row("kadikoy", "kadikoy")], facts({ ...input, tenants: placement("provisioning") }))).toEqual([["blocked", "BASELINE_REQUIRED"]]);
   expect(codes([row("kadikoy", "kadikoy")], facts({ ...input, tenants: placement("active") }))).toEqual([["alreadyAdopted"]]);
 });

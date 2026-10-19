@@ -10,7 +10,7 @@ const KEY = "neon-secret-key";
 const URL_ = "postgres://app_owner:db-secret@ep-cool-123-pooler.eu-central-1.aws.neon.tech/appdb";
 type Route = (init: RequestInit | undefined, url: URL) => unknown;
 
-/** Sahte Neon API'si: `<YÖNTEM> <yol>` → cevap; her çağrı kaydedilir. */
+/** Fake Neon API: `<METHOD> <path>` → response; every call is recorded. */
 function fake(routes: Record<string, Route>, apiOptions: { signal?: AbortSignal; timeoutMs?: number } = {}) {
   const calls: { method: string; path: string; query: string; body?: unknown }[] = [];
   const send = async (input: URL, init?: RequestInit) => {
@@ -30,7 +30,7 @@ const created: Route = () => ({ branch: { id: "br2" }, endpoints: [{ id: "ep2", 
 const finished: Route = () => ({ operation: { action: "create_branch", status: "finished" } });
 const happy = { "GET /projects": projects, "GET /projects/p1/endpoints": endpoints, "POST /projects/p1/branches": created, "GET /projects/p1/operations/op1": finished };
 const now = new Date("2026-10-03T10:15:00Z");
-/** Var olmayan export hedefi (`exportAt` var olan hedefi baştan reddeder). */
+/** A non-existent export target (`exportAt` rejects an existing target up front). */
 const MISSING = join(tmpdir(), `neon-tools-${crypto.randomUUID()}`);
 
 test("the API client sends the key but never lets it (or a network detail) reach a message", async () => {
@@ -155,7 +155,7 @@ test("safety point providers: neon, supabase, nothing; Supabase makes no API cal
   expect(point.note).toContain("paid add-on");
 });
 
-/** Asılı kalan sunucu: yanıt vermez, yalnızca istekteki sinyal kesilince reddeder. */
+/** Hanging server: never responds, rejects only when the request's signal aborts. */
 const hung = (init?: RequestInit) => new Promise<Response>((_, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal?.reason)));
 
 test("a hung request times out, and Ctrl-C (the cancel signal) stops it at once; neither message carries the key or a URL", async () => {
@@ -203,10 +203,10 @@ test("migrate --safety-point opens exactly one branch when migrations are pendin
   expect(await run([])).toEqual({ point: undefined, branches: 0 });
   expect((await run(["20261005000000_x"])).branches).toBe(1);
   expect(await run(["20261005000000_x"], { dryRun: true })).toEqual({ point: undefined, branches: 0 });
-  // Supabase noktası API çağrısı yapmaz ama bekleyen yoksa onu da üretmez.
+  // The Supabase endpoint makes no API call, but does not produce it either when there is no pending item.
   expect(await takeSafetyPoint(pending([]), app, { safetyPoint: "supabase" })).toBeUndefined();
   expect(await takeSafetyPoint(pending(["20261005000000_x"]), app, { safetyPoint: "supabase" })).toMatchObject({ provider: "supabase" });
-  // Geçersiz sağlayıcı ya da --org, bekleyen denetiminden (DB'den) önce reddedilir.
+  // An invalid provider or --org is rejected before the pending check (against the DB).
   const never = { migrate: async () => Promise.reject(new Error("database touched")) };
   await expect(takeSafetyPoint(never as never, app, { safetyPoint: "aws" })).rejects.toMatchObject({ code: "USAGE" });
   await expect(takeSafetyPoint(never as never, app, { org: "org-1" })).rejects.toMatchObject({ code: "USAGE" });

@@ -138,14 +138,14 @@ test("offline authoring commands run without configuration; DB commands validate
   }
 });
 
-/** `ps` çıktısındaki argümanlar: makinedeki her kullanıcı okuyabilir. */
+/** Arguments in the `ps` output: readable by every user on the machine. */
 async function processArguments(pid: number) {
   const ps = Bun.spawn(["ps", "-ww", "-o", "args=", "-p", String(pid)], { stdout: "pipe", stderr: "ignore" });
   const [text] = await Promise.all([new Response(ps.stdout).text(), ps.exited]);
   return text;
 }
 
-/** Akışı `needle` görünene kadar okur; `rest()` kalanını toplar. */
+/** Reads the stream until `needle` appears; `rest()` collects the remainder. */
 async function readUntil(stream: ReadableStream<Uint8Array>, needle: string) {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -185,7 +185,7 @@ test("the PgBouncer admin URL is read from hidden input and never appears in the
     await child.stdin.flush();
     const [exitCode, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), question.rest()]);
     expect(exitCode).toBe(1);
-    // Girilen URL gerçekten kullanılır: `/notpgbouncer` yolu doctor'ın INVALID_CONFIG denetimini düşürür.
+    // The entered URL is actually used: the `/notpgbouncer` path fails doctor's INVALID_CONFIG check.
     expect(JSON.parse(stdout).checks).toContainEqual({ target: "pgbouncer", check: "inspection", ok: false, detail: expect.stringContaining("INVALID_CONFIG") });
     expect(`${question.text}${stderr}${stdout}`).not.toContain("hunter2");
   } finally {
@@ -196,7 +196,7 @@ test("the PgBouncer admin URL is read from hidden input and never appears in the
 test("the runtime URLs of doctor --pooled-urls are read from hidden input; a wrong count is INVALID_CONFIG and nothing is echoed", async () => {
   const cwd = await mkdtemp(join(scratch, ".tmp-cli-"));
   try {
-    const secret = "postgres://admin:hunter2@127.0.0.1:1/app"; // DATABASE_URLS iki girdi, burada bir tane
+    const secret = "postgres://admin:hunter2@127.0.0.1:1/app"; // DATABASE_URLS has two entries, here just one
     const child = Bun.spawn([process.execPath, cli, "doctor", "--pooled-urls"], {
       cwd,
       env: { PATH: process.env.PATH ?? "", DATABASE_URLS: "postgres://admin:hunter2@127.0.0.1:1/app,postgres://admin:hunter2@127.0.0.1:2/app" },

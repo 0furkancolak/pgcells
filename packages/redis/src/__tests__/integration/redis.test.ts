@@ -1,4 +1,4 @@
-/** Gerçek Redis (`REDIS_URL`, varsayılan 127.0.0.1:6390) ve packages/db-multi compose PostgreSQL'i (`DATABASE_URLS`). `RUN_REDIS=1` ile çalışır. */
+/** Real Redis (`REDIS_URL`, default 127.0.0.1:6390) and the packages/db-multi compose PostgreSQL (`DATABASE_URLS`). Runs with `RUN_REDIS=1`. */
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { createConfig, createDatabase, type Span } from "@0furkancolak/pgcells";
 import { bunDriver } from "@0furkancolak/pgcells/drivers/bun";
@@ -37,7 +37,7 @@ integration("cache: tenant invalidation and cross-process local invalidation ove
   const prefix = `test-${crypto.randomUUID()}`;
   const a = createCache({ redis: one, prefix });
   const b = createCache({ redis: two, prefix });
-  await sleep(100); // abonelikler
+  await sleep(100); // subscriptions
   await a.forTenant(tenantId).set("x", { v: 1 });
   expect(await b.forTenant(tenantId).get<{ v: number }>("x")).toEqual({ v: 1 });
   await a.forTenant(tenantId).set("x", { v: 2 });
@@ -66,9 +66,9 @@ integration("placement cache fills from the platform DB and invalidates across p
   await a.invalidatePlacement(tenantId);
   const placement = await a.loadPlacement(tenantId);
   expect(placement.status).toBe("active");
-  expect(a(tenantId)).toEqual(placement); // senkron yerel isabet
-  await sleep(50); // wrap Redis'e arka planda yazar (`void set`); diğer bağlantı yazımdan önce okuyabilir
-  expect(await b(tenantId)).toEqual(placement); // Redis isabeti
+  expect(a(tenantId)).toEqual(placement); // synchronous local hit
+  await sleep(50); // wrap writes to Redis in the background (`void set`); the other connection may read before the write
+  expect(await b(tenantId)).toEqual(placement); // Redis hit
   await a.invalidatePlacement(tenantId);
   await sleep(50);
   expect(await b(tenantId)).toBeUndefined();
@@ -113,7 +113,7 @@ integration("tenant worker runs the job with a tenant-bound db scope", async () 
     const result = (await done) as { tenantId: string; rows: number };
     expect(result.tenantId).toBe(tenantId);
     expect(result.rows).toBeGreaterThanOrEqual(0);
-    await sleep(50); // queue.job span'i "completed" olayından sonra biter
+    await sleep(50); // the queue.job span ends after the "completed" event
     expect(spans.map(({ name, tenantId, detail, error }) => ({ name, tenantId, detail, error }))).toEqual([
       { name: "queue.add", tenantId, detail: "count", error: undefined },
       { name: "queue.job", tenantId, detail: "count", error: undefined },

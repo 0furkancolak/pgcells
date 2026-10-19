@@ -3,12 +3,12 @@ import { maskSqlComments, prepareMigration, prepareQuery, unqualifyMigration } f
 import { foldTables } from "../../core/sql/tables";
 import { isPreparedQuery } from "../../core/sql/query";
 
-// Depo genelindeki koruma testi bu sözcüğü yazan her dosyayı reddeder; reddedilmesi beklenen girdiler parçalardan kurulur.
+// The repo-wide guard test rejects every file that spells this word; inputs that are expected to be rejected are built from fragments.
 const SP = "search" + "_path";
 
 const a = `app_${"a".repeat(32)}`;
 const b = `app_${"b".repeat(32)}`;
-// En dıştaki `*` derlemede açılır: sütunlar migration katlamasının biçimindeki bir tablo listesinden gelir.
+// The outermost `*` is expanded at compile time: the columns come from a table list in the shape of the migration fold.
 const tables = new Map([
   ["students", ["id", "name", "status"]],
   ["courses", ["id", "title"]],

@@ -1,5 +1,5 @@
-/** İstemci deadline'ı gerçek sorguyu bırakmaz (`DB_DRIVER` = bun | postgres | pg): süresi dolan deyim iptal edilir ya da bağlantısı
- * atılır; arkadan yazım olmaz, çalışan deyimin oturumu yeniden kullanılmaz, transaction kirli dönmez. Doğrudan bağlantı ve PgBouncer. */
+/** The client deadline does not leave the real query behind (`DB_DRIVER` = bun | postgres | pg): the expired statement is cancelled or its connection
+ * is dropped; no write lands later, the session of the running statement is not reused, a transaction does not come back dirty. Direct connection and PgBouncer. */
 import { afterAll, beforeAll, expect } from "bun:test";
 import pg from "pg";
 import { connect, type Database } from "../../core/database";
@@ -8,7 +8,7 @@ import { bootstrap } from "../../management";
 import { createTestManagement, directConfig, driver, enabled, integration, pooledConfig, q, raw } from "./helpers";
 
 const DEADLINE_MS = 250;
-/** Cevap deadline'ı (deadline + 1 sn) + tarama aralığı + iptal beklemesi + pay. */
+/** Answer deadline (deadline + 1 s) + scan interval + cancel wait + margin. */
 const BOUND_MS = DEADLINE_MS + 1000 + 250 + 500 + 500;
 const schema = `deadline_matrix_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
 const writes = q(schema, "writes");
@@ -17,7 +17,7 @@ const bouncer = "postgres://admin:local_admin_password@127.0.0.1:5543/pgbouncer"
 
 beforeAll(async () => {
   if (!admin) return;
-  // Runtime DB varsayılanları (statement_timeout, client_connection_check_interval); PgBouncer sunucu bağlantıları yenilenir.
+  // Runtime DB defaults (statement_timeout, client_connection_check_interval); PgBouncer server connections are renewed.
   const management = createTestManagement();
   await bootstrap(management).finally(() => management.close());
   await adminConsole("RECONNECT");
@@ -28,7 +28,7 @@ afterAll(async () => {
   await admin?.close();
 });
 
-/** PgBouncer yönetim konsolu komutu (yalnızca simple protocol kabul eder; pg parametresiz sorguyu öyle gönderir); test altyapısı. */
+/** A PgBouncer admin console command (accepts only the simple protocol; pg sends a parameterless query that way); test infrastructure. */
 async function adminConsole(command: string) {
   const client = new pg.Client({ connectionString: bouncer });
   await client.connect();
@@ -55,7 +55,7 @@ async function outcome(work: Promise<unknown>) {
 
 const pid = async (db: Database) => (await db.query<{ pid: number }>("SELECT pg_catalog.pg_backend_pid() AS pid"))[0]?.pid;
 const rows = async (id: number) => (await admin?.query(`SELECT id FROM ${writes} WHERE id=$1`, [id]))?.length;
-/** Eski backend'in deyimi sona erdi mi (iptal ya da kopan istemci): `until` sınırına kadar `pg_stat_activity` yoklanır. */
+/** Whether the old backend's statement has ended (cancelled or client gone): polls `pg_stat_activity` until the `until` limit. */
 async function backendIdleOrGone(backend: number | undefined, ms: number) {
   const started = performance.now();
   while (performance.now() - started < ms) {
@@ -80,8 +80,8 @@ integration("running SELECT past the deadline: DATABASE_TIMEOUT in bounded time 
     const result = await outcome(db.query("SELECT pg_catalog.pg_sleep(4)"));
     expect(result.code).toBe("DATABASE_TIMEOUT");
     expect(result.ms).toBeLessThan(BOUND_MS);
-    expect(await pid(db)).not.toBe(before); // max=1: atılan bağlantının yerine yeni oturum
-    expect(await backendIdleOrGone(before, 2000)).toBe(true); // sunucudaki deyim de bitti
+    expect(await pid(db)).not.toBe(before); // max=1: a new session in place of the dropped connection
+    expect(await backendIdleOrGone(before, 2000)).toBe(true); // the statement on the server ended too
   }),
 );
 
@@ -92,7 +92,7 @@ integration("running INSERT past the deadline never commits later (direct and th
       const result = await outcome(db.query(`INSERT INTO ${writes} (id) SELECT $1 FROM pg_catalog.pg_sleep(3)`, [id]));
       expect(result.code).toBe("DATABASE_TIMEOUT");
       expect(result.ms).toBeLessThan(BOUND_MS);
-      await Bun.sleep(3500 - result.ms); // deyim iptal edilmeseydi şimdiye commit etmişti
+      await Bun.sleep(3500 - result.ms); // had the statement not been cancelled, it would have committed by now
       expect(await rows(id)).toBe(0);
     });
 });

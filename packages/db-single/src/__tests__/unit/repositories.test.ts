@@ -8,7 +8,7 @@ const ID = "0b7e9a52-6a43-4d6e-8f55-2a1f3c0d9e11";
 const NOW = new Date("2026-10-05T10:00:00Z");
 const row = { id: ID, name: "Ada", email: "ada@example.com", emailVerified: false, image: null, twoFactorEnabled: false, createdAt: NOW, updatedAt: NOW };
 
-/** Çağrıları kaydeden sahte `Queryable`; her çağrıya `rows` döner. */
+/** Fake `Queryable` that records calls; every call returns `rows`. */
 function recorder(rows: unknown[] = [row]) {
   const calls: [PreparedQuery, readonly unknown[] | undefined][] = [];
   const db = { query: (async (query, values) => (calls.push([query, values]), rows)) as Queryable["query"] };

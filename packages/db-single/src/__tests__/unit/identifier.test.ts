@@ -21,9 +21,9 @@ test("quoteIdentifier doubles quotes, refuses NUL, empty and over-long names", (
 
 test("quoteIdentifier limits by bytes, not characters", () => {
   expect(quoteIdentifier("a".repeat(63))).toBe(`"${"a".repeat(63)}"`);
-  expect(quoteIdentifier("ü".repeat(31))).toBe(`"${"ü".repeat(31)}"`); // 62 bayt
+  expect(quoteIdentifier("ü".repeat(31))).toBe(`"${"ü".repeat(31)}"`); // 62 bytes
   for (const bad of ["ü".repeat(32), "€".repeat(22), "😀".repeat(16)]) expect(() => quoteIdentifier(bad)).toThrow(expect.objectContaining({ code: "INVALID_IDENTIFIER" }));
-  expect(quoteIdentifier("€".repeat(21))).toBe(`"${"€".repeat(21)}"`); // 63 bayt
+  expect(quoteIdentifier("€".repeat(21))).toBe(`"${"€".repeat(21)}"`); // 63 bytes
 });
 
 test("qualified validates the schema and quotes both parts", () => {

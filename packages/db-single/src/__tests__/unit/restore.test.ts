@@ -23,7 +23,7 @@ const meta = {
   },
   tables: [{ name: "_migrations", file: "0.jsonl.gz", rows: 0 }],
 };
-/** Gerçek zamanlayıcılar: sahte zamanlayıcı kurulduktan sonra dosya G/Ç'sinin ilerlemesini beklemek için. */
+/** Real timers: to wait for file I/O to progress after the fake timers are installed. */
 const realImmediate = setImmediate;
 
 async function backupDir(format = meta.format) {
@@ -33,7 +33,7 @@ async function backupDir(format = meta.format) {
   return dir;
 }
 
-/** Boş hedefe kurulumun katalog yanıtları; `count` tablo satır sayısı sorgusunun yanıtıdır. */
+/** Catalog responses for setting up into an empty target; `count` is the answer to the table row-count query. */
 const restoreCatalog = (count: () => unknown[] | Promise<unknown[]> = () => [{ n: 0 }]) =>
   fakeDriver((text, _params, pool) => {
     if (text.includes("pg_locks")) return [{ pid: 100 + pool.index, held: true }];
@@ -70,7 +70,7 @@ test("a restore statement slower than the 35 s management watchdog completes: th
   let reached = false;
   const fake = restoreCatalog(() => {
     reached = true;
-    // Saatlik deyim yerine 40 sn'lik deyim: varsayılan 35 sn'lik watchdog'u aşar.
+    // A 40 s statement instead of an hour-long one: it exceeds the default 35 s watchdog.
     return new Promise<{ n: number }[]>((resolve) => setTimeout(() => resolve([{ n: 0 }]), 40_000));
   });
   const m = createManagement(createConfig("postgres://admin@127.0.0.1:7900/app"), { driver: fake.driver });

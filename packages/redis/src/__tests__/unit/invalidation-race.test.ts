@@ -1,5 +1,5 @@
-/** Geçersiz kılma yarışları (Redis'siz, kontrollü Promise): uçuştaki Redis okuması ya da yükleyici, geçersiz kılmadan sonra yerel
- * katmanı ve Redis'i yeniden dolduramaz; pub/sub dinleyicileri kapatılınca birikmez. */
+/** Invalidation races (without Redis, controlled Promises): an in-flight Redis read or loader cannot repopulate the local
+ * layer and Redis after an invalidation; pub/sub listeners do not accumulate once closed. */
 import { expect, test } from "bun:test";
 import { createCache } from "../../cache";
 import type { RedisClient } from "../../client";
@@ -12,8 +12,8 @@ const gate = (): Gate => {
   return { open, wait };
 };
 
-/** Süreçler arası paylaşılan sahte Redis. `holdNextRead` sonraki okumanın cevabını (okuma anındaki değer) kapıda tutar; `manual`
- * yayınları `deliver` çağrılana kadar bekletir. `eval` önbelleğin iki betiğini taklit eder. */
+/** Fake Redis shared across processes. `holdNextRead` holds the next read's response (the value at read time) at a gate; `manual`
+ * holds broadcasts until `deliver` is called. `eval` mimics the cache's two scripts. */
 function fakeRedis() {
   const store = new Map<string, string>();
   const listeners = new Set<(channel: string, message: string) => void>();
@@ -92,10 +92,10 @@ test("an in-flight Redis GET answered after invalidation is not remembered (same
     const before = fake.readsStarted();
     const pending = reader("abc");
     await flush(() => fake.readsStarted() > before);
-    await writer.invalidatePlacement("abc"); // pub/sub ile okuyucunun nesli de ilerler
+    await writer.invalidatePlacement("abc"); // via pub/sub, the reader's generation advances too
     held.open();
     expect(await pending).toBeUndefined();
-    expect(reader("abc")).toBeInstanceOf(Promise); // yerel katmanda eski kayıt yok
+    expect(reader("abc")).toBeInstanceOf(Promise); // no stale entry in the local layer
     reader.close();
     writer.close();
   }
@@ -117,10 +117,10 @@ test("a wrap loader that resolves an old active placement after invalidation rep
     finishLoad(active);
     expect(await loading).toEqual(active);
     await flush();
-    expect(fake.store.has(KEY)).toBe(false); // Redis'e eski placement yazılmadı
-    expect(loader("abc")).toBeInstanceOf(Promise); // yerel katman da boş (yayın henüz gelmemiş olsa bile)
+    expect(fake.store.has(KEY)).toBe(false); // the stale placement was not written to Redis
+    expect(loader("abc")).toBeInstanceOf(Promise); // the local layer is empty too (even if the broadcast has not arrived yet)
     fake.deliver();
-    // Geçersiz kılmadan sonra başlayan yükleme normal yazar.
+    // A load that starts after the invalidation writes normally.
     const fresh = loader.loadPlacement("abc");
     await flush(() => loads === 2);
     finishLoad(active);
@@ -158,18 +158,18 @@ test("closing caches removes their message listeners and unsubscribes only with 
   const baseline = fake.listeners.size;
   for (let i = 0; i < 50; i++) createCache({ redis: fake.redis }).close();
   expect(fake.listeners.size).toBe(baseline);
-  expect(fake.counts.unsubscribe).toBe(0); // keeper hâlâ abone
+  expect(fake.counts.unsubscribe).toBe(0); // keeper is still subscribed
 
   await keeper.set("g", 1);
   const other = createCache({ redis: fake.other() });
   expect(await other.get<number>("g")).toBe(1);
-  await other.set("g", 2); // keeper'ın yerel kaydı yayınla silinmeli
+  await other.set("g", 2); // keeper's local entry must be removed by the broadcast
   expect(await keeper.get<number>("g")).toBe(2);
 
-  other.close(); // ayrı abone bağlantısı: kendi son kullanıcısı
+  other.close(); // separate subscriber connection: its own last user
   expect(fake.counts.unsubscribe).toBe(1);
   keeper.close();
-  keeper.close(); // iki kez kapatmak güvenli
+  keeper.close(); // closing twice is safe
   expect(fake.listeners.size).toBe(0);
   expect(fake.counts.unsubscribe).toBe(2);
 });

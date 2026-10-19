@@ -1,4 +1,4 @@
-/** Placement önbelleği süresi, taşımanın beklediği sınırı (`PLACEMENT_CACHE_MAX_MS`) aşamaz. */
+/** The placement cache lifetime cannot exceed the bound the move waits for (`PLACEMENT_CACHE_MAX_MS`). */
 import { expect, test } from "bun:test";
 import { PLACEMENT_CACHE_MAX_MS } from "@0furkancolak/pgcells";
 import { createPlacementCache } from "../../placement";

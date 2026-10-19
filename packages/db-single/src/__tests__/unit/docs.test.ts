@@ -1,6 +1,6 @@
-/** Belgeler yürütülebilir denetimle korunur: göreli bağlantılar çözülür, `docs/cli.md` her komutu adlandırır, `docs/errors.md` kaynaktaki
- * hata kodlarıyla birebir aynıdır, kod örneklerindeki import yolları gerçek `exports` anahtarlarıdır, gösterdikleri dosya vardır ve içe
- * aktarılan (tip olmayan) adları dışa aktarır. */
+/** Docs are protected by an executable check: relative links resolve, `docs/cli.md` names every command, `docs/errors.md` matches the error codes in the source
+ * exactly, import paths in code examples are real `exports` keys, the files they point to exist, and the names they
+ * import (non-type) are actually exported. */
 import { expect, test } from "bun:test";
 import { Glob } from "bun";
 import { dirname, join, resolve } from "node:path";
@@ -10,7 +10,7 @@ const root = join(import.meta.dir, "../../..");
 const read = (path: string) => Bun.file(join(root, path)).text();
 const markdown = () => ["README.md", ...[...new Glob("docs/*.md").scanSync({ cwd: root })].sort()];
 
-/** GitHub başlık bağlantısı: küçük harf, noktalama (`, ’ …) atılır, boşluk `-` olur, Türkçe harfler kalır. */
+/** GitHub heading anchor: lowercase, punctuation (`, ’ …) is dropped, spaces become `-`, Turkish letters stay. */
 const slug = (heading: string) => heading.trim().toLowerCase().replace(/[^\p{L}\p{N} _-]/gu, "").replaceAll(" ", "-");
 const anchors = async (file: string) =>
   new Set([...(await read(file)).replace(/```[\s\S]*?```/g, "").matchAll(/^#{1,6} (.+)$/gm)].map((match) => slug(match[1] as string)));
@@ -42,14 +42,14 @@ test("docs/errors.md lists exactly the error codes the source throws", async () 
   }
   const documented = new Set([...(await read("docs/errors.md")).matchAll(/^\| `([A-Z][A-Z0-9_]+)` \|/gm)].map((match) => match[1] as string));
   expect([...thrown].filter((code) => !documented.has(code)).sort()).toEqual([]);
-  // Değişkenle atılan kodlar (ör. DriftCode) kaynakta tırnaklı sabit olarak geçer.
+  // Codes thrown through a variable (e.g. DriftCode) appear in the source as quoted constants.
   const everywhere = [...source.values()].join("\n");
   expect([...documented].filter((code) => !everywhere.includes(`"${code}"`)).sort()).toEqual([]);
 });
 
 test("import paths in code examples are real package exports, point at an existing file and export the imported names", async () => {
   const exportsMap = ((await Bun.file(join(root, "package.json")).json()) as { exports: Record<string, string> }).exports;
-  /** `./queries/users` → `./src/queries/users.gen.ts` (joker anahtar), tam anahtar ise kendi hedefi. */
+  /** `./queries/users` → `./src/queries/users.gen.ts` (wildcard key); an exact key maps to its own target. */
   const target = (path: string) => {
     for (const [key, file] of Object.entries(exportsMap)) {
       if (key === path) return file;

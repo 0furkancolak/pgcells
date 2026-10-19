@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fails when Turkish text remains in source comments and documentation. Exempt: applied migration/seed files (their bytes are frozen),
-# tests (translated later), design history, the Turkish README, the unpublished preset, fixtures, and benchmark results. The word
+# tests (their comments are English; they keep deliberate non-ASCII test data such as "çğ" and "Ayşe"), design history, the Turkish README, the unpublished preset, fixtures, and benchmark results. The word
 # "Türkçe" (language-switch link) is allowed.
 set -euo pipefail
 cd "$(dirname "$0")/.."

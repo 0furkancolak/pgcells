@@ -1,4 +1,4 @@
-/** Better Auth uçtan uca: paketin `auth` migration'ı → `createAuth` → gerçek PostgreSQL; CI drift denetimi aynı seçenek nesnesiyle. */
+/** Better Auth end to end: the package's `auth` migration → `createAuth` → real PostgreSQL; the CI drift check uses the same options object. */
 import { expect } from "bun:test";
 import { betterAuth } from "better-auth";
 import authOptions from "../fixtures/auth-options";
@@ -41,7 +41,7 @@ integration("sign up, sign in and a wrong password work against the shipped tabl
       const signedIn = await auth.api.signInEmail({ body: { email, password: "correct horse battery" } });
       expect(signedIn.user.id).toBe(signedUp.user.id);
       await expect(auth.api.signInEmail({ body: { email, password: "wrong password!!" } })).rejects.toBeDefined();
-      // Kayıt otomatik oturum açar, giriş ikincisini: iki oturum.
+      // Sign-up opens a session automatically and sign-in opens the second: two sessions.
       expect((await admin.query(`SELECT count(*)::integer AS n FROM ${q(schema, "session")}`))[0]).toEqual({ n: 2 });
     } finally {
       await db.close();

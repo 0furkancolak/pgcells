@@ -1,4 +1,4 @@
-/** Komut satırında yanlışlıkla yazılan bir URL (parolalı) hiçbir hata iletisinde yer almaz: ileti değeri değil, kuralı söyler. */
+/** A URL (with a password) mistakenly typed on the command line never appears in any error message: the message states the rule, not the value. */
 import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

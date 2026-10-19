@@ -8,7 +8,7 @@ import { listTenants } from "../../queries/platform/tenants.gen";
 import { createTestManagement, createUser, driver, integration, listUsers, pooledConfig, removeTenants, uniqueEmail } from "./helpers";
 
 const management = createTestManagement();
-/** Her testin kendi `mw-` tenant'ı; paylaşılan DB'lerde iz kalmaz. */
+/** Each test gets its own `mw-` tenant; no trace stays in the shared DBs. */
 const tenantIds: string[] = [];
 function tenantId() {
   const id = `mw-${crypto.randomUUID().slice(0, 8)}`;
@@ -23,14 +23,14 @@ afterAll(async () => {
   }
 });
 
-/** Hono'nun kullandığı yüzey kadar sahte context. */
+/** A fake context with just the surface Hono uses. */
 function context(host: string) {
   const vars: { db?: RequestDb } = {};
   const c: MiddlewareContext = { req: { header: (name) => (name === "host" ? host : undefined) }, set: (_key, value) => (vars.db = value) };
   return { c, vars };
 }
 
-/** Sürücüyü sarar; `platform.placements` okuyan sorguları sayar (havuz ve ayrılmış bağlantı yolları). */
+/** Wraps the driver; counts queries that read `platform.placements` (pool and reserved connection paths). */
 function countingPlacements() {
   const counter = { reads: 0 };
   const track = <T extends Connection>(connection: T, rest: Omit<T, keyof Connection>): T =>

@@ -1,4 +1,4 @@
-/** Taşıma, placement `migrating` olduktan sonra veri kopyalamadan önce önbellek süresi kadar bekler (kancasız süreçler için). */
+/** A move waits for the cache duration after the placement becomes `migrating` and before copying data (for processes without hooks). */
 import { afterAll, beforeAll, expect } from "bun:test";
 import { startMove } from "../../core/tools/move";
 import { bootstrap, provisionTenant } from "../../management";

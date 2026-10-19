@@ -6,7 +6,7 @@ afterEach(() => {
   process.exitCode = 0;
 });
 
-/** `console.log`/`console.error` çıktısını yakalar. */
+/** Captures `console.log`/`console.error` output. */
 async function capture(work: () => Promise<unknown>) {
   const out: string[] = [];
   const err: string[] = [];

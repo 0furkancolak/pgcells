@@ -1,4 +1,4 @@
-/** Bekçi: bu paketin kaynağında çok-tenant sözlüğü yoktur. Nedenini anlatan notlar yalnızca `docs/` altındadır (bu test oraya bakmaz). */
+/** Guard: this package's source has no multi-tenant vocabulary. Notes explaining why live only under `docs/` (this test does not look there). */
 import { expect, test } from "bun:test";
 import { Glob } from "bun";
 import { join } from "node:path";
@@ -6,12 +6,12 @@ import { join } from "node:path";
 const root = join(import.meta.dir, "../../..");
 const WORDS = /tenant|placement|platform/i;
 const PATTERNS = ["src/**/*", "package.json", "compose.yaml", ".env.example"];
-// Bekçinin kendisi ve belge denetimi (docs/from-multi.md'nin sözlüğü bilerek içerdiğini sınar) sözcükleri anmak zorundadır.
+// The guard itself and the docs check (which verifies that docs/from-multi.md deliberately contains the vocabulary) have to mention the words.
 const EXEMPT = ["src/__tests__/unit/no-multi-tenant.test.ts", "src/__tests__/unit/docs.test.ts"];
 
 test("package sources, manifests and compose files use no multi-tenant vocabulary", async () => {
   const hits: string[] = [];
-  // Bun Glob, süslü parantez içinde `/` ve `**` barındıran alternatifleri eşleştirmiyor (0 dosya); desenler ayrı taranır.
+  // Bun Glob does not match alternatives containing `/` and `**` inside braces (0 files); the patterns are scanned separately.
   const files = PATTERNS.flatMap((pattern) => [...new Glob(pattern).scanSync({ cwd: root, dot: true })]);
   expect(files).toContain("package.json");
   expect(files.some((file) => file.startsWith("src/core/"))).toBe(true);

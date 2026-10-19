@@ -1,5 +1,5 @@
-/** Sürücü hataları çağırana yalnızca kararlı koduyla ulaşır: mesajda host, kullanıcı, DB adı ya da satır değeri yoktur. Uygulamanın kendi
- * hatası (`transaction(work)` içinde atılan) olduğu gibi geçer. */
+/** Driver errors reach the caller only by their stable code: the message has no host, user, DB name or row value. The application's own
+ * error (thrown inside `transaction(work)`) passes through as is. */
 import { expect, test } from "bun:test";
 import { createConfig } from "../../core/config";
 import type { Driver } from "../../core/driver";
@@ -14,7 +14,7 @@ import { fakeDriver } from "../fixtures/fake-driver";
 const PRIMARY = "postgres://app:secret-pw@primary.example/one";
 const REPLICA = "postgres://app:secret-pw@replica.example/one";
 const select = prepareQuery("SELECT id FROM users WHERE id = $1::integer");
-/** `constraint` adı bilinçli olarak taşınır (tanımlayıcı, sır değil); mesaj yine yalnızca koddur. */
+/** The `constraint` name is deliberately carried (an identifier, not a secret); the message is still just the code. */
 const SECRETS = ["127.0.0.1", "5599", '"app"', "a@b.c", "secret-pw", "example"];
 
 const failures = {
@@ -29,7 +29,7 @@ const failures = {
 };
 const codes = { refused: "ECONNREFUSED", auth: "28P01", unique: "23505" } as const;
 
-/** Replica durum sorguları sağlıklı döner; uygulama sorgusu verilen hatayla düşer. */
+/** Replica status queries return healthy; the application query fails with the given error. */
 const failingDriver = (fail: () => Error) =>
   fakeDriver((text) => {
     if (text.includes("pg_current_wal_lsn")) return [{ lsn: "0/1" }];

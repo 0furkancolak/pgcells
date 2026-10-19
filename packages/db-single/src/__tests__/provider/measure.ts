@@ -1,5 +1,5 @@
-/** Sağlayıcı doğrulama ölçümleri (`bun run verify:provider`); yayımlanan pakete girmez. Her ölçüm kendi geçici havuzunu açıp kapatır
- * ve çıktıya URL, host, kullanıcı veya parola koymaz. */
+/** Provider verification measurements (`bun run verify:provider`); not part of the published package. Each measurement opens and closes its own temporary pool
+ * and puts no URL, host, user or password in the output. */
 import { CLIENT_CONNECTION_CHECK_MS } from "../../core/config";
 import type { Driver, Pool } from "../../core/driver";
 import { errorCode } from "../../core/errors";
@@ -7,7 +7,7 @@ import { quoteIdentifier } from "../../core/identifier";
 import { usesTransactionPooler } from "../../core/pooler";
 import { probeReplica } from "../../core/replicas";
 
-/** Ölçümlerin paylaştığı bağlam: sürücü ve çıktıdan silinecek bütün URL'ler (yönetim + runtime). */
+/** Context shared by the measurements: the driver and all URLs to be scrubbed from the output (management + runtime). */
 export interface Context {
   driver: Driver;
   urls: readonly string[];
@@ -23,8 +23,8 @@ const decoded = (value: string) => {
   }
 };
 
-/** Tam URL'leri, parolayı (ham ve çözülmüş), host'u ve proje ref'i taşıyan kullanıcı adını metinden siler. Düz `postgres` rolü
- * okunur kalır: yetki hatalarının anlamı ona bağlı. */
+/** Removes full URLs, the password (raw and decoded), the host and the user name carrying the project ref from the text. The plain `postgres` role
+ * stays readable: the meaning of privilege errors depends on it. */
 export function scrub(text: string, urls: readonly string[]): string {
   let result = text.replace(/postgres(?:ql)?:\/\/\S+/gi, "[url]");
   for (const raw of urls) {
@@ -37,13 +37,13 @@ export function scrub(text: string, urls: readonly string[]): string {
   return result;
 }
 
-/** `<kod>: <temizlenmiş mesaj>`; sürücü hataları kimlik bilgisi ve host içerebilir. */
+/** `<code>: <scrubbed message>`; driver errors may contain credentials and the host. */
 export function describe(error: unknown, urls: readonly string[]): string {
   const message = error instanceof Error ? error.message : String(error);
   return `${errorCode(error)}: ${scrub(message, urls)}`.slice(0, MAX_ERROR_CHARS);
 }
 
-// Bun SQL çalışan bir sorguyu da boşta sayıp `idleTimeout`'ta düşürür; uzun `pg_sleep` ölçümü için süre uzun tutulur (havuz her ölçümde kapatılır).
+// Bun SQL also counts a running query as idle and drops it at `idleTimeout`; the timeout is kept long for the long `pg_sleep` measurement (the pool is closed after every measurement).
 const POOL = { max: 1, idleTimeoutSeconds: 60, maxLifetimeSeconds: 0, connectTimeoutSeconds: 10 } as const;
 
 const withPool = async <T>(driver: Driver, url: string, work: (pool: Pool) => Promise<T>): Promise<T> => {
@@ -64,22 +64,22 @@ const STORED_SETTING = `SELECT pg_catalog.current_database() AS name,
 const quoted = (value: string) => `'${value.replaceAll("'", "''")}'`;
 
 export interface AlterDatabaseResult {
-  /** `ALTER DATABASE … SET` kabul edildi mi. */
+  /** Whether `ALTER DATABASE … SET` was accepted. */
   allowed: boolean;
-  /** Ayar yeni bir doğrudan oturumda görüldü mü. */
+  /** Whether the setting was seen in a new direct session. */
   newSession?: boolean;
-  /** Runtime (pooler) URL'sinde görüldü mü; pooler mevcut sunucu bağlantılarını yeniden kullanabilir, `false` tek başına hata değildir. */
+  /** Whether it was seen on the runtime (pooler) URL; the pooler may reuse existing server connections, so `false` alone is not an error. */
   throughRuntime?: boolean;
   error?: string;
-  /** Özgün değer geri yazılamadıysa elle çalıştırılacak SQL (URL ve parola içermez). */
+  /** SQL to run by hand if the original value could not be written back (contains no URL or password). */
   restoreSql?: string;
 }
 
 const seesProbe = (driver: Driver, url: string) =>
   withPool(driver, url, async (pool) => (await pool.query<{ value: string }>(`SELECT current_setting('${SETTING}') AS value`))[0]?.value === PROBE_VALUE);
 
-/** `migrate`'ın yaptığı `ALTER DATABASE … SET` işini geçici bir değerle dener, yeni oturumlarda görüldüğünü ölçer ve özgün değeri
- * (veya yokluğunu) geri yazar. Ölçüm hata verse de geri yazma çalışır. */
+/** Tries the `ALTER DATABASE … SET` that `migrate` does with a temporary value, measures that it shows up in new sessions, and writes the original value
+ * (or its absence) back. The write-back runs even if the measurement fails. */
 export async function alterDatabase({ driver, urls }: Context, managementUrl: string, runtimeUrl: string): Promise<AlterDatabaseResult> {
   try {
     return await withPool(driver, managementUrl, (admin) => alterWith(admin, { driver, urls }, managementUrl, runtimeUrl));
@@ -120,12 +120,12 @@ const EXTENSIONS = ["citext", "pg_trgm", "pgcrypto"];
 export interface PrivilegeResult {
   createSchema: boolean;
   superuser: boolean;
-  /** Kurulu olmayan ilk uygun extension'ın `CREATE EXTENSION` denemesi (transaction geri alınır); aday yoksa yok. */
+  /** A `CREATE EXTENSION` attempt for the first suitable extension that is not installed (the transaction is rolled back); absent if there is no candidate. */
   extension?: { name: string; allowed: boolean; error?: string };
   error?: string;
 }
 
-/** `migrate`'ın ihtiyacı olan `CREATE` hakkı ve rol türü; extension yetkisi geri alınan bir transaction'da denenir. */
+/** The `CREATE` privilege and role kind that `migrate` needs; the extension privilege is tried in a transaction that is rolled back. */
 export async function privileges({ driver, urls }: Context, managementUrl: string): Promise<PrivilegeResult> {
   try {
     return await withPool(driver, managementUrl, async (pool) => {
@@ -160,7 +160,7 @@ const PROBE_DEADLINE_MS = 15_000;
 
 export type ProbeResult = { transactionPooler: boolean } | { error: string };
 
-/** A'nın `pg_backend_pid` sınaması: runtime URL'si için `true`, yönetim URL'si için `false` beklenir. */
+/** A's `pg_backend_pid` probe: `true` is expected for the runtime URL and `false` for the management URL. */
 export async function probe({ driver, urls }: Context, url: string): Promise<ProbeResult> {
   try {
     return { transactionPooler: await usesTransactionPooler(driver, url, { deadlineMs: PROBE_DEADLINE_MS }) };
@@ -173,17 +173,17 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 const SLEEP_SECONDS = 120;
 
 export interface DeadlineResult {
-  /** Etiketli uzun sorgu `pg_stat_activity`'de görüldü mü; görülmediyse "sunucu durdu" ölçümü anlamsızdır. */
+  /** Whether the tagged long query was seen in `pg_stat_activity`; if not, the "server stopped" measurement is meaningless. */
   observedRunning: boolean;
-  /** Sürücü `cancel` tanımlıyor mu (`neonDriver` ve Bun SQL tanımlamaz). */
+  /** Whether the driver defines `cancel` (`neonDriver` and Bun SQL do not). */
   cancelDefined: boolean;
-  /** Bağlantı atıldıktan sonra sunucudaki sorgunun bitmesi için geçen süre; süre içinde bitmediyse `null`. */
+  /** Time for the server-side query to finish after the connection was discarded; `null` if it did not finish in time. */
   serverStoppedAfterMs: number | null;
   error?: string;
 }
 
-/** Runtime URL'sinde ayrılmış bağlantıda uzun bir sorgu başlatır, `afterMs` sonra bağlantıyı atar (`release(true)`, varsa `cancel`)
- * ve yönetim URL'sinden sunucudaki sorgunun ne zaman bittiğini izler. `client_connection_check_interval` `migrate`'ın varsayılanıdır. */
+/** Starts a long query on a reserved connection on the runtime URL, discards the connection after `afterMs` (`release(true)`, `cancel` if present)
+ * and watches via the management URL when the server-side query ends. `client_connection_check_interval` is `migrate`'s default. */
 export async function deadline(
   { driver, urls }: Context,
   runtimeUrl: string,
@@ -201,7 +201,7 @@ export async function deadline(
         const reserved = await pool.reserve();
         let startError: string | undefined;
         let dropped = false;
-        /** Bağlantıyı bir kez atar; ölçüm ortasında hata olsa da sunucuda 120 sn'lik sorgu açık kalmaz. */
+        /** Discards the connection once; even if the measurement fails midway, no 120 s query stays open on the server. */
         const drop = () => {
           if (dropped) return;
           dropped = true;
@@ -241,7 +241,7 @@ export type ReplicaResult =
 
 const SAMPLES = 3;
 
-/** Replica'nın gerçek davranışı: üç örnekte lag (replay LSN'e göre) ve recovery çakışmasını belirleyen iki ayar. Yalnızca okur. */
+/** The replica's real behavior: lag (by replay LSN) in three samples and the two settings that decide recovery conflicts. Read-only. */
 export async function replica({ driver, urls }: Context, primaryUrl: string, replicaUrl: string, gapMs = 1000): Promise<ReplicaResult> {
   try {
     return await withPool(driver, primaryUrl, (primary) =>

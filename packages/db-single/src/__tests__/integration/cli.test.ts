@@ -56,13 +56,13 @@ integration("migrate --safety-point stops before migrating when the safety point
     const created = (await copy.cli("migration", "create", "add_notes")) as { id: string; path: string };
     await copy.write(created.path, "--up\nCREATE TABLE notes (id integer PRIMARY KEY);\n--down\nDROP TABLE notes;\n");
     await copy.codegen();
-    // Gizli giriş boş: API anahtarı yok → nokta alınamaz → migrate hiç çalışmaz.
+    // Hidden input is empty: no API key → no point can be obtained → migrate never runs.
     const failed = await copy.cliRaw("migrate", "--schema", schema, "--safety-point", "neon");
     expect(failed.code).toBe(1);
     expect(JSON.parse(failed.stderr.trim().split("\n").at(-1) ?? "")).toMatchObject({ error: "USAGE" });
     expect(await schemaExists(admin, schema)).toBe(false);
-    expect((await copy.cliRaw("migrate", "--schema", schema, "--org", "org-1")).code).toBe(1); // --org yalnızca neon ile
-    // --dry-run nokta almaz: Neon anahtarı sorulmaz, Supabase noktası yazdırılmaz (stdout'ta yalnızca sonuç belgesi).
+    expect((await copy.cliRaw("migrate", "--schema", schema, "--org", "org-1")).code).toBe(1); // --org only works with neon
+    // --dry-run takes no point: the Neon key is not asked for, the Supabase point is not printed (stdout holds only the result document).
     for (const provider of ["neon", "supabase"]) {
       const run = await copy.cliRaw("migrate", "--schema", schema, "--dry-run", "--safety-point", provider);
       expect(run.code, run.stderr).toBe(0);

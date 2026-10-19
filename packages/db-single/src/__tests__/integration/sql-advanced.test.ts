@@ -5,7 +5,7 @@ import { prepareMigration, prepareQuery } from "../../core/sql/compiler";
 import { functions } from "../../core/sql/grammar";
 import { createTestManagement, dropSchema, failure, inSchema, integration, q, raw, roundTrip, testSchema } from "./helpers";
 
-/** Her test kendi schema'sını kurar ve siler; `setup`: bu schema'da çalışacak migration SQL'i. */
+/** Each test sets up and drops its own schema; `setup`: the migration SQL that runs in this schema. */
 async function withSchema(setup: string, work: (run: ReturnType<typeof inSchema>) => Promise<void>) {
   const db = raw();
   const schema = testSchema();
@@ -32,7 +32,7 @@ integration("JSON, regex and containment operators evaluate in PostgreSQL on eve
       await ctx.query(seed);
       const ids = (sql: string, values: unknown[] = []) => ctx.query(prepareQuery(`${sql} ORDER BY events.id`), values);
       expect(await ids("SELECT id FROM events WHERE data ? 'a'")).toEqual([{ id: 1 }]);
-      // `?` yer tutucu sayılmaz: parametreyle de çalışır.
+      // `?` is not counted as a placeholder: it also works with a parameter.
       expect(await ids("SELECT id FROM events WHERE data ? $1", ["z"])).toEqual([{ id: 2 }]);
       expect(await ids("SELECT id FROM events WHERE data ?| ARRAY['a', 'z']")).toEqual([{ id: 1 }, { id: 2 }]);
       expect(await ids("SELECT id FROM events WHERE data ?& ARRAY['a', 'b']")).toEqual([{ id: 1 }]);
@@ -94,7 +94,7 @@ integration("table-returning functions work in FROM and in the select list", asy
   );
 });
 
-// `readOnly` (replica okuma bağlamı) izin listesinin yan etkisiz olmasına dayanır: katalogda `volatile` olan tek istisna `gen_random_uuid`'dir.
+// `readOnly` (the replica read context) relies on the allowlist being side-effect free: the only `volatile` exception in the catalog is `gen_random_uuid`.
 integration("allowlisted functions are not volatile in the catalog (except gen_random_uuid)", async () => {
   const db = raw();
   try {
@@ -141,7 +141,7 @@ integration("INTERSECT, EXCEPT and their ALL forms follow PostgreSQL precedence"
       expect(await ids("SELECT id FROM left_ids EXCEPT SELECT id FROM right_ids ORDER BY id")).toEqual([1]);
       expect(await ids("SELECT id FROM left_ids INTERSECT ALL SELECT id FROM right_ids ORDER BY id")).toEqual([2, 3]);
       expect(await ids("SELECT id FROM left_ids EXCEPT ALL SELECT id FROM right_ids ORDER BY id")).toEqual([1, 3]);
-      // INTERSECT, UNION'dan sıkı bağlanır: left ∪ (right ∩ {4}); sola ilişkili okunsaydı sonuç yalnızca [4] olurdu.
+      // INTERSECT binds tighter than UNION: left ∪ (right ∩ {4}); had it been read left-associatively, the result would be just [4].
       expect(
         await ids("SELECT id FROM left_ids UNION SELECT id FROM right_ids INTERSECT SELECT id FROM right_ids WHERE id > 3 ORDER BY id"),
       ).toEqual([1, 2, 3, 4]);
@@ -192,7 +192,7 @@ integration("IS DISTINCT FROM compares NULLs, window frames and grouping sets ev
   );
 });
 
-// Kontrolsüz özyineleme için yeni mekanizma yoktur: sunucu tarafı statement_timeout durdurur ve backend arkada çalışmaz.
+// There is no new mechanism for runaway recursion: the server-side statement_timeout stops it, and the backend does not keep running in the background.
 integration("a runaway recursive CTE is ended by the server statement timeout", async () => {
   const db = raw();
   const runaway = prepareQuery("WITH RECURSIVE r AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM r) SELECT count(*) AS runaway_marker FROM r").bind(testSchema());
@@ -246,7 +246,7 @@ integration("network, text-search and range types round-trip as strings on every
           day: "[2026-01-01,2026-02-01)",
         },
       ]);
-      // Parametreyle yazıp okumak: değer tipi string, cast parametrede.
+      // Writing and reading with a parameter: the value type is string, the cast is on the parameter.
       await ctx.query(prepareQuery("INSERT INTO hosts (label, ip, span, valid) VALUES ($1, $2::inet, $3::int4range, $4::tstzrange)"), [
         "c",
         "172.16.0.1",
@@ -280,8 +280,8 @@ integration("tsvector, network and range operators evaluate", async () => {
   );
 });
 
-/** `up`/`table`: tek migration'ın DDL'i ve geri alması; schema `migrate` ile kurulur, yedekten dönüşte satırlar ve tanımlar aynı kalmalıdır
- * (`ignore`: PostgreSQL'in yeniden yazdığı, yalnızca yazımı değişen tanım satırları). */
+/** `up`/`table`: the DDL of a single migration and its rollback; the schema is set up with `migrate`, and rows and definitions must stay the same after coming back from a backup
+ * (`ignore`: definition lines PostgreSQL rewrites, changing only their spelling). */
 async function surviveBackup(table: string, up: string, rows: string, afterwards?: (admin: ReturnType<typeof raw>, schema: string) => Promise<void>, ignore?: RegExp) {
   const registry = { migrations: compileMigrations([["20260101000001_setup", `--up\n${up}\n--down\nDROP TABLE ${table};\n`]]), seeds: [] };
   const [admin, schema] = [raw(), testSchema()];
@@ -300,7 +300,7 @@ async function surviveBackup(table: string, up: string, rows: string, afterwards
   }
 }
 
-// Export/restore sonrası serial dizileri kaldığı yerden sürer.
+// After export/restore, serial sequences continue where they left off.
 integration("serial columns survive a backup restore and keep counting", () =>
   surviveBackup(
     "tickets",
@@ -312,7 +312,7 @@ integration("serial columns survive a backup restore and keep counting", () =>
   ),
 );
 
-// Yedek aracı derleyicinin kabul ettiği her tipi taşıyabilmelidir (SHAPE_RULES izin listesi).
+// The backup tool must be able to carry every type the compiler accepts (SHAPE_RULES allowlist).
 integration("a schema with every extra type survives a backup restore with identical contents", () =>
   surviveBackup(
     "hosts",
@@ -323,7 +323,7 @@ integration("a schema with every extra type survives a backup restore with ident
   ),
 );
 
-// Katalog uzun tip adlarını yazar (`character varying`, `timestamp with time zone`, …): varsayılan ve CHECK ifadeleri yine yedeklenebilir.
+// The catalog spells long type names (`character varying`, `timestamp with time zone`, …): defaults and CHECK expressions can still be backed up.
 integration("defaults the catalog spells with long type names survive a backup restore", () =>
   surviveBackup(
     "orders",
@@ -339,7 +339,7 @@ integration("defaults the catalog spells with long type names survive a backup r
   ),
 );
 
-// PostgreSQL `IN`'i `= ANY ((ARRAY['a'::character varying, …])::text[])` diye yazar; geri yüklemede dizi eleman başına dönüşür (yazım farkı, anlam aynı).
+// PostgreSQL spells `IN` as `= ANY ((ARRAY['a'::character varying, …])::text[])`; on restore the array is converted per element (spelling difference, same meaning).
 integration("a varchar CHECK the catalog spells with ANY(ARRAY[…]) survives a backup restore and is still enforced", () =>
   surviveBackup(
     "tickets",

@@ -93,7 +93,7 @@ test("catchUp fails with REPLICA_LAG_EXCEEDED when the replica does not catch up
   await source.close();
 });
 
-/** Standby'ın çakışma sayacı (`pg_stat_database_conflicts`) iş sırasında `bump` ile artırılabilir. */
+/** The standby's conflict counter (`pg_stat_database_conflicts`) can be raised with `bump` during the work. */
 function conflictFixture() {
   const state = { counter: 5 };
   const fake = fakeDriver((text, _params, pool) => {
@@ -114,8 +114,8 @@ function conflictFixture() {
 test("a connection lost during a transaction while the standby's conflict counter rose is REPLICA_CONFLICT", async () => {
   const { state, app } = conflictFixture();
   const source = await openReplicaSource(app, `db0=${DIRECT}`);
-  const lost = new Error("connection closed"); // sürücüler terminate edilen bağlantıda yalnızca genel bir hata verir
-  expect(await code(source.node("db0").transaction(() => Promise.reject(lost)))).toMatchObject({ message: "connection closed" }); // sayaç artmadı
+  const lost = new Error("connection closed"); // drivers raise only a generic error on a terminated connection
+  expect(await code(source.node("db0").transaction(() => Promise.reject(lost)))).toMatchObject({ message: "connection closed" }); // the counter did not increase
   expect(
     await code(
       source.node("db0").transaction(async () => {
@@ -130,7 +130,7 @@ test("a connection lost during a transaction while the standby's conflict counte
 test("the counter baseline is taken per transaction: an earlier conflict does not relabel a later unrelated failure", async () => {
   const { state, app } = conflictFixture();
   const source = await openReplicaSource(app, `db0=${DIRECT}`);
-  state.counter += 3; // açılıştan sonra, transaction'dan önce başka bir çakışma
+  state.counter += 3; // another conflict after opening, before the transaction
   const lost = new Error("connection closed");
   expect(await code(source.node("db0").transaction(() => Promise.reject(lost)))).toMatchObject({ message: "connection closed" });
   await source.close();
@@ -142,7 +142,7 @@ test("only connection-class failures are diagnosed: app errors, filesystem error
   const failing = (error: unknown) =>
     code(
       source.node("db0").transaction(async () => {
-        state.counter += 1; // sayaç artsa bile
+        state.counter += 1; // even if the counter increases
         throw error;
       }),
     );
@@ -150,12 +150,12 @@ test("only connection-class failures are diagnosed: app errors, filesystem error
   expect(await failing(Object.assign(new Error("relation does not exist"), { code: "42P01" }))).toMatchObject({ code: "42P01" });
   const { AppError } = await import("../../core/errors");
   expect(await failing(new AppError("SQL_UNSUPPORTED", "unsupported"))).toMatchObject({ code: "SQL_UNSUPPORTED" });
-  // Her transaction başında bir kez taban sayaç okunur; yalnızca bağlantı sınıfı hatada sayaç bir kez daha okunur.
+  // The baseline counter is read once at the start of each transaction; the counter is read once more only on a connection-class error.
   const plain = diagnoses();
   await failing(Object.assign(new Error("relation does not exist"), { code: "42P01" }));
   expect(diagnoses()).toBe(plain + 1);
   const connection = diagnoses();
-  await failing(Object.assign(new Error("not queryable"), {})); // pg'nin kopma mesajı: CONNECTION_CLOSED
+  await failing(Object.assign(new Error("not queryable"), {})); // pg's disconnect message: CONNECTION_CLOSED
   expect(diagnoses()).toBe(connection + 2);
   await source.close();
 });

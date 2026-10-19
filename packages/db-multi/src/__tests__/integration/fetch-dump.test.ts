@@ -1,5 +1,5 @@
-/** `dump fetch` gerçek compose DB'sine karşı: Docker'daki pg_dump ile schema yedeği, `dump split` ile okunabilirlik, var olan dosyayı
- * korumak ve yanlış parolada parolayı sızdırmayan hata. */
+/** `dump fetch` against the real compose DB: a schema backup with the pg_dump in Docker, readability via `dump split`, protecting an existing file
+ * and an error that does not leak the password on a wrong password. */
 import { afterAll, expect } from "bun:test";
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -31,7 +31,7 @@ integration("dump fetch downloads a schema as .sql.gz that dump split reads, nev
   const analysis = await splitSqlDump(file, join(dir, "split"));
   expect(Object.keys(analysis.tables)).toContain("platform.tenants");
 
-  expect(await failure(fetchDump(file, { url, schemas: ["platform"] }))).toBe("USAGE"); // var olan dosya korunur
+  expect(await failure(fetchDump(file, { url, schemas: ["platform"] }))).toBe("USAGE"); // the existing file is kept
 
   const wrong = new URL(url);
   wrong.password = "wrong_secret_value";
@@ -39,7 +39,7 @@ integration("dump fetch downloads a schema as .sql.gz that dump split reads, nev
   const error = await failed.then(() => undefined, (reason: { code?: string; message?: string }) => reason);
   expect(error?.code).toBe("DUMP_FETCH_FAILED");
   expect(error?.message).not.toContain("wrong_secret_value");
-  expect((await readdir(dir)).filter((name) => name.startsWith("wrong"))).toEqual([]); // yarım dosya kalmaz
+  expect((await readdir(dir)).filter((name) => name.startsWith("wrong"))).toEqual([]); // no half file is left
 });
 
 integration("a target file created after the check is never overwritten and the downloaded data is kept", async () => {
@@ -48,7 +48,7 @@ integration("a target file created after the check is never overwritten and the 
   const url = directConfig().nodes[0]?.url ?? "";
   const file = join(dir, "raced.sql.gz");
 
-  // `url` fonksiyonu dosya kontrolünden hemen sonra çağrılır: pencere tam buradadır.
+  // The `url` function is called right after the file check: the window is exactly here.
   const raced = fetchDump(file, {
     url: async () => {
       await writeFile(file, "BASKA BIR YEDEK");
@@ -58,7 +58,7 @@ integration("a target file created after the check is never overwritten and the 
   });
   expect(await failure(raced)).toBe("USAGE");
   expect(await readFile(file, "utf8")).toBe("BASKA BIR YEDEK");
-  expect((await stat(`${file}.partial`)).size).toBeGreaterThan(0); // indirilen veri kaybolmaz
+  expect((await stat(`${file}.partial`)).size).toBeGreaterThan(0); // the downloaded data is not lost
 });
 
 integration("a failing pg_dump is reported as DUMP_FETCH_FAILED with its stderr and without the password", async () => {
@@ -68,7 +68,7 @@ integration("a failing pg_dump is reported as DUMP_FETCH_FAILED with its stderr 
   const password = new URL(url).password;
   const file = join(dir, "missing-schema.sql.gz");
 
-  // Bağlantı kurulur (serverMajor geçer), pg_dump olmayan schema'da hata verir: hata :139 yolundan gelir.
+  // The connection is made (serverMajor passes), pg_dump fails on a schema that does not exist: the error comes from the :139 path.
   const error = await fetchDump(file, { url, schemas: ["no_such_schema_here"] }).then(
     () => undefined,
     (reason: { code?: string; message?: string }) => reason,
@@ -77,7 +77,7 @@ integration("a failing pg_dump is reported as DUMP_FETCH_FAILED with its stderr 
   expect(error?.message).toContain("no matching schemas");
   expect(password.length).toBeGreaterThan(0);
   expect(error?.message).not.toContain(password);
-  expect(await readdir(dir)).toEqual([]); // ne hedef ne yarım dosya kalır
+  expect(await readdir(dir)).toEqual([]); // neither the target nor a half file is left
 });
 
 integration("a signal during the download cancels with USAGE and removes this run's half file", async () => {

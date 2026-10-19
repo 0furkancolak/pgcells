@@ -1,5 +1,5 @@
-/** Cloudflare Workers uyumluluk doğrulaması (`bun run build:workers`): yalnızca runtime girişini ve postgres.js ile Neon serverless sürücülerini kullanır.
- * Hyperdrive ile kullanan bir Worker için başvuru örneğidir; config ve client istek başına kurulur. Bun SQL bundle'a girmez. */
+/** Cloudflare Workers compatibility check (`bun run build:workers`): uses only the runtime entry and the postgres.js and Neon serverless drivers.
+ * It is a reference example for a Worker using Hyperdrive; config and client are created per request. Bun SQL does not enter the bundle. */
 import { neonDriver } from "../../core/drivers/neon";
 import { postgresDriver } from "../../core/drivers/postgres";
 import { defineQuery } from "../../core/sql/query";
@@ -7,17 +7,17 @@ import { createConfig, createDb } from "../../index";
 
 type Env = Record<string, unknown>;
 
-/** Codegen çıktısı biçiminde (parçalar arasına schema gelir) elle yazılmış okuma sorgusu: bundle'a parser girmez. */
+/** A hand-written read query in the codegen output form (the schema goes between the parts): the parser does not enter the bundle. */
 const listUsers = defineQuery(["SELECT id::text AS id, name FROM ", '.users ORDER BY created_at, id LIMIT $1::"pg_catalog"."int4"'], false, true);
 
-/** Hyperdrive binding'i `DB` (`connectionString`); düz string değer de kabul edilir. */
+/** Hyperdrive binding `DB` (`connectionString`); a plain string value is accepted too. */
 export function workerConfig(env: Env) {
   const value = env.DB;
   const url = typeof value === "string" ? value : (value as { connectionString?: unknown } | undefined)?.connectionString;
   return createConfig(typeof url === "string" ? url : "");
 }
 
-/** `DRIVER=neon` Neon serverless sürücüsünü (WebSocket), aksi halde Hyperdrive için postgres.js'i seçer. */
+/** `DRIVER=neon` selects the Neon serverless driver (WebSocket), otherwise postgres.js for Hyperdrive. */
 const driverFor = (env: Env) => (env.DRIVER === "neon" ? neonDriver : postgresDriver);
 
 export default {
@@ -26,7 +26,7 @@ export default {
     try {
       return Response.json(await db.read.query(listUsers, [20]));
     } finally {
-      // Soketler isteği aşamaz: yanıt gönderildikten sonra kapatılır.
+      // Sockets cannot outlive the request: they are closed after the response is sent.
       ctx.waitUntil(db.close().catch(() => {}));
     }
   },

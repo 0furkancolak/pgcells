@@ -19,7 +19,7 @@ test("catalog type names become the compiler's canonical spelling, quoted text s
   expect(canonicalTypes(`((code)::character varying = 'character varying'::text) AND ("double precision" > (0)::double precision)`)).toBe(
     `((code)::varchar = 'character varying'::text) AND ("double precision" > (0)::float8)`,
   );
-  // character(n) de kanonikleşir; `character varying` ile karışmaz.
+  // character(n) is canonicalized too; it is not confused with `character varying`.
   expect(canonicalTypes(`(((n)::character(3) = 'abc'::bpchar) AND ((m)::character varying(5) <> ''::character varying) AND (c)::character <> 'x')`)).toBe(
     `(((n)::bpchar(3) = 'abc'::bpchar) AND ((m)::varchar(5) <> ''::varchar) AND (c)::bpchar <> 'x')`,
   );

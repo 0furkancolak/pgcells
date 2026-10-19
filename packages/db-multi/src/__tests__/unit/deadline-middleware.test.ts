@@ -1,4 +1,4 @@
-/** İstemci yanıt deadline'ı (PgBouncer sunucusuz kaldığında) ve middleware'e uygulamanın veritabanını vermek. */
+/** Client response deadline (when PgBouncer is left without a server) and handing the application's database to middleware. */
 import { expect, test } from "bun:test";
 import { createConfig } from "../../core/config";
 import { connect } from "../../core/database";

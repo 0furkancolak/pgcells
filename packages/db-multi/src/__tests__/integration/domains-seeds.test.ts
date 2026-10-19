@@ -1,5 +1,5 @@
-/** Alan adı tenant ID'leri, schema adlandırma, demo tenant'lar ve seed'ler (gerçek PostgreSQL). Paketin tek seed'i demo profilindeki
- * `demo_login`dir (Demo kullanıcısı + parola hesabı); install profili boştur. */
+/** Domain tenant IDs, schema naming, demo tenants and seeds (real PostgreSQL). The package's only seed is the demo profile's
+ * `demo_login` (Demo user + password account); the install profile is empty. */
 import { afterAll, beforeAll, expect } from "bun:test";
 import { bootstrap, provisionTenant, resetDemoTenant, seedAll, seedTenant } from "../../management";
 import { seeds, tenantMigrations } from "../../core/migrations/registry";
@@ -52,7 +52,7 @@ integration("a real tenant gets only install seeds and a seed ledger; demo seeds
   const p = await provisionTenant(app, id, "db1", { report: (event) => events.push(event) });
   expect(p).toMatchObject({ kind: "tenant", schemaName: tenantSchema(id), status: "active" });
   expect(seedEvents(events)).toEqual(ids("install"));
-  // Demo girişi gerçek tenant'a yazılmaz.
+  // The demo login is not written to a real tenant.
   expect([await count(p, "_seeds"), await count(p, "users"), await count(p, "account")]).toEqual([ids("install").length, 0, 0]);
   expect(await seedTenant(app, id)).toEqual({ tenantId: id, profile: "install", dryRun: false, seeds: [] });
   expect(await provisionTenant(app, id, "db1")).toMatchObject({ status: "active" });
@@ -112,7 +112,7 @@ integration("seeds need current migrations; seedAll applies pending seeds to act
   const db = app.pools.node(p.databaseId);
   const last = tenantMigrations.at(-1);
   if (!last) throw new Error("No tenant migrations");
-  // Seed'ler hiç çalışmamış gibi: ledger ve demo girişinin yazdıkları (hesap cascade ile) silinir.
+  // As if the seeds never ran: the ledger and what the demo login wrote (with the account cascade) are deleted.
   await db.query(`DELETE FROM ${q(p.schemaName, "_seeds")}`);
   await db.query(`DELETE FROM ${q(p.schemaName, "users")}`);
   await db.query(`DELETE FROM ${q(p.schemaName, "_migrations")} WHERE id=$1`, [last.id]);

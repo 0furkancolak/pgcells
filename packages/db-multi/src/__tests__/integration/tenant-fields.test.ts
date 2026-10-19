@@ -1,6 +1,6 @@
-/** `platform.tenants` uygulama alanları (gerçek PostgreSQL): uygulamanın NOT NULL sütunları provision, benimseme ve geri yüklemede
- * tenant satırıyla aynı deyimde yazılır; export ve yedek setleri satırın bütün sütunlarını taşır. Paylaşılan DB'ler temiz kalsın diye
- * eklenen sütunlar, tenant'lar ve schema'lar `afterAll`'da kaldırılır. */
+/** `platform.tenants` application fields (real PostgreSQL): the application's NOT NULL columns are written in the same statement as the tenant row
+ * on provision, adoption and restore; export and backup sets carry all of the row's columns. To keep the shared DBs clean, the
+ * added columns, tenants and schemas are removed in `afterAll`. */
 import { afterAll, beforeAll, expect } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,10 +16,10 @@ let root: string;
 const u = `x${crypto.randomUUID().replaceAll("-", "").slice(0, 8)}`;
 const id = (label: string) => `fields-${u}-${label}`;
 const legacy = (label: string) => `legacy_fields_${u}_${label}`;
-/** Bu çalıştırmaya özgü uygulama sütunları; başka test dosyalarının sütunlarıyla (ör. birleştirmedeki `name`) çakışmaz. */
+/** Application columns specific to this run; they do not collide with other test files' columns (e.g. `name` in the merge). */
 const [nameColumn, emailColumn, joinedColumn, lateColumn] = [`app_name_${u}`, `owner_email_${u}`, `joined_${u}`, `late_${u}`];
 const camel = (name: string) => name.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
-/** Zorunlu iki alan; e-posta sütunu camelCase anahtarla verilir. */
+/** Two required fields; the email column is given with a camelCase key. */
 const fields = (label: string) => ({ [nameColumn]: `Name ${label}`, [camel(emailColumn)]: `${label}@fields.test` });
 
 beforeAll(async () => {
@@ -27,7 +27,7 @@ beforeAll(async () => {
   app = createTestManagement();
   await bootstrap(app);
   root = await mkdtemp(join(tmpdir(), "db-tenant-fields-"));
-  // Var olan satırlar geçici varsayılanla dolar; sonra varsayılan kalkar ve yeni satırlar değeri vermek zorundadır.
+  // Existing rows are filled with a temporary default; then the default is dropped and new rows must supply the value.
   await app.pools.platform.exec(`ALTER TABLE platform.tenants ADD COLUMN ${q(nameColumn)} text NOT NULL DEFAULT '',
       ADD COLUMN ${q(emailColumn)} text NOT NULL DEFAULT '', ADD COLUMN ${q(joinedColumn)} timestamptz;
     ALTER TABLE platform.tenants ALTER COLUMN ${q(nameColumn)} DROP DEFAULT, ALTER COLUMN ${q(emailColumn)} DROP DEFAULT`);
@@ -55,7 +55,7 @@ afterAll(async () => {
   }
 });
 
-/** Tenant satırının bütün sütunları `row_to_json` metni olarak (birebir karşılaştırma için). */
+/** All columns of the tenant row as `row_to_json` text (for exact comparison). */
 const tenantRow = async (tenantId: string) =>
   (await app.pools.platform.query<{ row: string }>("SELECT pg_catalog.row_to_json(t)::text AS row FROM platform.tenants t WHERE t.tenant_id=$1", [tenantId]))[0]?.row;
 const appFields = async (tenantId: string) =>
@@ -66,7 +66,7 @@ const appFields = async (tenantId: string) =>
     )
   )[0];
 
-/** Tenant'ı kaybetmek: schema ve platform satırları silinir. */
+/** Losing the tenant: schema and platform rows are deleted. */
 async function destroy(tenantId: string) {
   const p = await app.platform.get(tenantId);
   await app.pools.node(p.databaseId).exec(`DROP SCHEMA ${q(p.schemaName)} CASCADE`);
@@ -83,7 +83,7 @@ integration("provision writes application fields with the tenant row; a missing 
   const one = await provisionTenant(app, id("one"), "db0", { tenant: { ...fields("one"), [joinedColumn]: "2024-01-02T03:04:05Z" } });
   expect(one.status).toBe("active");
   expect(await appFields(id("one"))).toEqual({ name: "Name one", email: "one@fields.test", joined: true });
-  // Aynı niyetle tekrar: var olan kayıt değişmez.
+  // Again with the same intent: the existing record does not change.
   await provisionTenant(app, id("one"), "db0", { tenant: fields("other") });
   expect(await appFields(id("one"))).toMatchObject({ name: "Name one" });
 
@@ -95,7 +95,7 @@ integration("provision writes application fields with the tenant row; a missing 
   for (const tenant of rejected) expect(await failure(provisionTenant(app, id("bad"), "db0", { tenant }))).toBe("INVALID_CONFIG");
   expect(await failure(app.platform.get(id("bad")))).toBe("TENANT_NOT_FOUND");
 
-  // Bağlam sütunları okuduktan sonra eklenen sütun da bulunur (önbellek tazelenir).
+  // A column added after the context read is also found (the cache is refreshed).
   await app.pools.platform.exec(`ALTER TABLE platform.tenants ADD COLUMN ${q(lateColumn)} integer`);
   await provisionTenant(app, id("late"), "db1", { tenant: { ...fields("late"), [lateColumn]: 7 } });
   expect((await app.pools.platform.query(`SELECT ${q(lateColumn)} AS late FROM platform.tenants WHERE tenant_id=$1`, [id("late")]))[0]).toEqual({ late: 7 });
@@ -131,25 +131,25 @@ integration("export and backup sets carry the whole tenant row; restore round-tr
   const sets = join(root, "sets");
   const set = await backupAll(app, sets, { full: true, tenants: [tenantId] });
 
-  // Export klasöründen: created_at dahil satır birebir döner.
+  // From the export folder: the row comes back exactly, including created_at.
   await destroy(tenantId);
   expect((await restoreTenant(app, tenantId, exported)).placement.status).toBe("active");
   expect(await tenantRow(tenantId)).toBe(before);
 
-  // Yedek kökünden: `tenant.json`'da satır olmasa da setin platform kaydı kullanılır.
+  // From the backup root: even if `tenant.json` has no row, the set's platform record is used.
   await destroy(tenantId);
   await rewriteBackup(join(sets, set.id, "tenants", tenantId, "tenant.json"), ({ tenant: _, ...backup }) => backup);
   await restoreTenant(app, tenantId, sets);
   expect(await tenantRow(tenantId)).toBe(before);
 
-  // Hedefte artık olmayan sütun atlanır ve raporlanır.
+  // A column that no longer exists on the target is skipped and reported.
   await destroy(tenantId);
   const gone = `gone_${u}`;
   await rewriteBackup(join(exported, "tenant.json"), (backup) => ({ ...backup, tenant: { ...backup.tenant, [gone]: 1 } }));
   expect(await restoreTenant(app, tenantId, exported)).toMatchObject({ skippedTenantColumns: [gone] });
   expect(await tenantRow(tenantId)).toBe(before);
 
-  // Bu alandan önce alınmış yedek: zorunlu sütunlar `tenant` seçeneğiyle verilir.
+  // A backup taken before this field: required columns are supplied with the `tenant` option.
   await destroy(tenantId);
   await rewriteBackup(join(exported, "tenant.json"), ({ tenant: _, ...backup }) => backup);
   expect(await failure(restoreTenant(app, tenantId, exported))).toBe("23502");

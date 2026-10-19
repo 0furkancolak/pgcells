@@ -46,7 +46,7 @@ test("tenantRead reads from the replica until the request writes, then stays on 
   const { request, primary, replica } = scope();
   await request.tenantRead.query(select, ["id"]);
   expect([replica.length, primary.length]).toEqual([1, 0]);
-  await request.tenant.query(select, ["id"]); // okuma yazı sayılmaz
+  await request.tenant.query(select, ["id"]); // a read does not count as a write
   await request.tenantRead.query(select, ["id"]);
   expect(replica).toHaveLength(2);
   await request.tenant.query(update, ["x", "id"]);
@@ -75,7 +75,7 @@ test("scopes do not share write state and tenantRead exposes only query", async 
   expect(Object.keys(a.request.tenantRead)).toEqual(["query"]);
 });
 
-/** İki replica'lı sahte: `pick` sırayla birini verir; `fail` o replica sorgusunu bağlantı hatasıyla düşürür. */
+/** A fake with two replicas: `pick` hands out one in turn; `fail` fails that replica's query with a connection error. */
 function twoReplicas(options: { failFirst?: boolean } = {}) {
   const logs: string[][] = [[], []];
   let failFirst = options.failFirst ?? false;
@@ -119,5 +119,5 @@ test("after the pinned replica fails with a connection error the next read picks
   expect(await request.tenantRead.query(select, ["id"]).catch((e: unknown) => (e as { code: string }).code)).toBe("ECONNRESET");
   heal();
   await request.tenantRead.query(select, ["id"]);
-  expect(logs.map((log) => log.length)).toEqual([1, 1]); // ikinci okuma yeniden seçti: diğer replica
+  expect(logs.map((log) => log.length)).toEqual([1, 1]); // the second read re-picked: the other replica
 });

@@ -1,5 +1,5 @@
-/** Better Auth tenant schema'larında, kendi bağdaştırıcımızla: runtime PgBouncer üzerinden, yönetim doğrudan. İzolasyon, çerezler, auth
- * türleri (user/student/teacher tek tenant'ta, çok türlü auth tabloları), 2FA tabloları, demo girişi, drift, üretim. */
+/** Better Auth in tenant schemas, with our own adapter: runtime through PgBouncer, management direct. Isolation, cookies, auth
+ * types (user/student/teacher in one tenant, multi-type auth tables), 2FA tables, demo login, drift, generation. */
 import { afterAll, beforeAll, expect } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -22,7 +22,7 @@ const DEMO_EMAIL = `demo@${DEMO}.example.com`;
 const EMAIL = "same@example.com";
 const PASSWORD = "Passw0rd!Passw0rd";
 const AUTH_TYPES: readonly AuthType[] = ["user", "student", "teacher"];
-/** Auth türünün kullanıcı ve 2FA tabloları (`20260915155444_auth.sql`). */
+/** The auth type's user and 2FA tables (`20260915155444_auth.sql`). */
 const TABLES = {
   user: { users: "users", twoFactor: "two_factor" },
   student: { users: "students", twoFactor: "student_two_factors" },
@@ -39,7 +39,7 @@ beforeAll(async () => {
   await bootstrap(runtime.management);
   for (const [id, databaseId] of [[ACME, "db0"], [GLOBEX, "db1"]] as const) {
     const p = (placements[id] = await provisionTenant(runtime.management, id, databaseId));
-    // Sürücü başına tekrar çalışır: önceki kullanıcılar (oturum, hesap ve 2FA kayıtları cascade) silinir.
+    // Reruns per driver: earlier users are deleted (sessions, accounts and 2FA rows cascade).
     const t = (name: string) => q(p.schemaName, name);
     await runtime.management.pools
       .node(databaseId)
@@ -55,7 +55,7 @@ afterAll(async () => {
   }
 });
 
-/** cookieCache açık: ortak secret'la `createTenantAuth` bunu reddeder, bu yüzden tenant secret'ı. `secret` karşı örnek içindir. */
+/** cookieCache on: `createTenantAuth` rejects this with a shared secret, hence the tenant secret. `secret` is for the counterexample. */
 const tenantAuth = (secret?: string) =>
   createTenantAuth(runtime, (tenant) => betterAuth({ ...tenant.options, ...authOptions, ...(secret && { secret }), session: { ...authOptions.session, ...cookieCache } }), {
     secret: SECRET,
@@ -119,8 +119,8 @@ integration("with cookieCache a session cookie from one tenant is rejected by an
   expect((await call(acme, ACME, "/get-session", undefined, cookies[ACME])).json?.user.email).toBe(EMAIL);
   expect((await call(globex, GLOBEX, "/get-session", undefined, cookies[ACME])).json).toBeNull();
   expect((await call(globex, GLOBEX, "/get-session", undefined, renamed)).json).toBeNull();
-  // Karşı örnek (make ortak secret'ı zorlar, denetim bilerek atlanır): yeniden adlandırılmış önbellek çerezi kabul edilir. Bu yüzden
-  // createTenantAuth ortak secret'la cookieCache'i reddeder.
+  // Counterexample (make enforces a shared secret, the check is skipped on purpose): a renamed cache cookie is accepted. So
+  // createTenantAuth rejects cookieCache with a shared secret.
   const sharedFor = tenantAuth(SECRET);
   const shared = await signIn(await sharedFor(ACME), ACME);
   const leaked = await call(await sharedFor(GLOBEX), GLOBEX, "/get-session", undefined, shared.cookie.replaceAll(`${ACME}.`, `${GLOBEX}.`));
@@ -149,7 +149,7 @@ integration("user, student and teacher auth in one tenant: own tables and column
     expect(signedIn.cookie).toContain(`${authType}-${ACME}.session_token=`);
     cookieOf[authType] = signedIn.cookie;
     expect((await auth.api.getSession({ headers: new Headers({ cookie: signedIn.cookie }) }))?.user).toMatchObject({ email, name: authType, emailVerified: false });
-    // twoFactor eklentisi auth türünün kendi 2FA tablosuna yazar (snake_case sütunlar).
+    // The twoFactor plugin writes to the auth type's own 2FA table (snake_case columns).
     const enabled = await call(auth, ACME, "/two-factor/enable", { password: PASSWORD }, signedIn.cookie, base);
     expect(enabled.status).toBe(200);
     expect(enabled.json?.backupCodes).toHaveLength(10);
@@ -175,7 +175,7 @@ integration("a malformed id finds nothing on the uuid columns instead of failing
   expect(await adapter.deleteMany({ model: "session", where: [{ field: "userId", value: "x" }] })).toBe(0);
 });
 
-/** Rate limit sayaçları için ayrı bir istemci IP'si; satırlar anahtar önekiyle (`<ip>|<yol>`) silinir. */
+/** A separate client IP for rate limit counters; rows are deleted by key prefix (`<ip>|<path>`). */
 const testIp = () => `198.51.100.${1 + Math.floor(Math.random() * 250)}`;
 const databaseRateLimit = (authType: AuthType) => ({
   enabled: true,
@@ -238,7 +238,7 @@ integration("panel auth on db0's platform schema: sign-up, sign-in, 2FA and a da
     expect((await call(panel, "panel", "/two-factor/enable", { password: PASSWORD }, signedIn.cookie, base, headers)).status).toBe(200);
     expect((await call(panel, "panel", "/sign-in/email", { email, password: "wrong-password" }, undefined, base, headers)).status).toBe(401);
     expect((await call(panel, "panel", "/sign-in/email", { email, password: PASSWORD }, undefined, base, headers)).status).toBe(429);
-    // Kayıt da oturum açar; rate limit sayacı yol başınadır ve reddedilen deneme sayılmaz.
+    // Sign-up also signs in; the rate limit counter is per path and a rejected attempt does not count.
     const [row] = await platform.query<{ users: number; sessions: number; factors: number; limits: string }>(
       `SELECT count(*)::int AS users,
               (SELECT count(*)::int FROM platform.session s WHERE s.user_id = u.id) AS sessions,
@@ -284,9 +284,9 @@ integration("migrated tenant schemas match Better Auth options of every auth typ
     const text = await Bun.file(`${root}/${result.path}`).text();
     expect(text).toBe(`--up\nalter table "users" add column "plan" text;\n\n--down\nALTER TABLE "users" DROP COLUMN "plan";\n`);
     expect(compileMigrations("tenant", [[result.id, text]])[0]?.down?.bind(placements[ACME]?.schemaName ?? "")).toHaveLength(1);
-    // Boolean alan timestamp sütununa eşlenmişse (teacher `email_verified`) fark tip uyuşmazlığıdır, dosya yazılmaz. Better Auth
-    // alanları eşlenmiş sütun adına göre anahtarlar: var olan başka bir alanın adı (ör. `createdAt`) iki alanı birleştirir, bu yüzden
-    // ayrı bir timestamp sütunu kullanılır.
+    // If a boolean field is mapped to a timestamp column (teacher `email_verified`), the diff is a type mismatch and no file is written. Better Auth
+    // keys fields by the mapped column name: another existing field's name (e.g. `createdAt`) would merge the two fields, so
+    // a separate timestamp column is used.
     const schema = placements[ACME]?.schemaName ?? "";
     await app.pools.node("db0").exec(`ALTER TABLE ${q(schema, "users")} ADD COLUMN email_verified_at timestamptz`);
     try {

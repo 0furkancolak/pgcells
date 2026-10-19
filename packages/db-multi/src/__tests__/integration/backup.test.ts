@@ -1,4 +1,4 @@
-/** Kademeli yedek, dışa aktarma, geri yükleme ve yedek temizleme (gerçek PostgreSQL, geçici klasör). */
+/** Incremental backup, export, restore and backup pruning (real PostgreSQL, temporary folder). */
 import { afterAll, beforeAll, expect } from "bun:test";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

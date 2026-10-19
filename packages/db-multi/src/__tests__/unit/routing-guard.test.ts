@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { Glob } from "bun";
 import { join } from "node:path";
 
-/** Tenant yönlendirmesi hiçbir yerde oturum durumuna dayanmaz: SQL derlenirken schema'ya nitelenir. İstisna yoktur. Depo genelinde
- * kaynak, SQL, fixture ve yapılandırma taranır; belgeler taranmaz ("`search_path` kullanılmaz" cümlesi çalıştırma değildir). */
+/** Tenant routing never relies on session state: SQL is qualified with the schema at compile time. No exceptions. Across the repo,
+ * source, SQL, fixtures and configuration are scanned; docs are not (the sentence "`search_path` is not used" is not execution). */
 const REPO = join(import.meta.dir, "../../../../..");
 const SCANNED = [
   "packages/*/src/**/*.{ts,js,sql}",
@@ -14,14 +14,14 @@ const SCANNED = [
   "packages/db-multi/src/core/local/**/*.{ini,txt}",
   ".github/**/*.{yml,yaml}",
 ];
-/** `SET`/`RESET` (rol/DB varsayılanı dahil), `set_config`, URL `options=-c search_path` ve `?search_path=`. */
+/** `SET`/`RESET` (including role/DB defaults), `set_config`, URL `options=-c search_path` ve `?search_path=`. */
 const RUNTIME_FORMS = [
   /\b(?:SET|RESET)\s+(?:LOCAL\s+|SESSION\s+)?search_path\b/i,
   /\bset_config\s*\(\s*['"]search_path/i,
   /options=-c(?:\s|%20)*search_path/i,
   /[?&]search_path=/i,
 ];
-/** Yasak biçimi yalnızca reddedildiğini doğrulamak için girdi olarak veren testler. */
+/** Tests that feed the forbidden form as input only to verify it is rejected. */
 const REJECTION_TESTS = new Set([
   "packages/db-multi/src/__tests__/unit/routing-guard.test.ts",
   "packages/db-multi/src/__tests__/unit/sql.test.ts",
@@ -55,5 +55,5 @@ test("the guard recognises every runtime form and ignores prose", () => {
     "postgres://h/app?sslmode=require&search_path=tenant_a",
   ])
     expect(executesSearchPath(sample)).toBe(true);
-  expect(executesSearchPath("- `search_path` hiçbir adımda kullanılmaz; ROUTING_PARAMETERS = ['options', 'search_path']")).toBe(false);
+  expect(executesSearchPath("- `search_path` is not used in any step; ROUTING_PARAMETERS = ['options', 'search_path']")).toBe(false);
 });

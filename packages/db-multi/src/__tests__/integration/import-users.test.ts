@@ -1,4 +1,4 @@
-/** Kullanıcı aktarımı: JSONL/SQL kaynağı, tekrar çalıştırma, e-posta çakışması ve aktarılmış parola hash'leri (gerçek PostgreSQL). */
+/** User import: JSONL/SQL source, rerun, email conflict and imported password hashes (real PostgreSQL). */
 import { afterAll, beforeAll, expect } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -121,9 +121,9 @@ integration("a mapped record whose new email belongs to another user: skip and f
 
   expect(await importUsers(app, p.tenantId, moved, { source: "crm", onConflict: "link" })).toMatchObject({ linked: 1, updated: 0, skipped: 0 });
   const after = await state();
-  expect(after.mapping).toEqual([{ user_id: owner }]); // eşleme B'ye taşındı
-  expect(after.users).toEqual(before.users); // A'nın e-postası B'ninkine güncellenmedi, B'nin adı değişmedi
+  expect(after.mapping).toEqual([{ user_id: owner }]); // the mapping moved to B
+  expect(after.users).toEqual(before.users); // A's email was not updated to B's, B's name did not change
   expect(after.accounts).toEqual([{ user_id: owner }]);
-  // Tekrar çalıştırmak aynı sonucu verir.
+  // Running again gives the same result.
   expect(await importUsers(app, p.tenantId, moved, { source: "crm", onConflict: "link" })).toMatchObject({ unchanged: 1 });
 });

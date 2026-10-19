@@ -1,4 +1,4 @@
-/** Migration yazımı uçtan uca: create → codegen → migrate/down (geçici paket kopyasında CLI) ve baseline işareti. */
+/** Migration authoring end to end: create → codegen → migrate/down (CLI in a temporary package copy) and the baseline marker. */
 import { afterAll, beforeAll, expect } from "bun:test";
 import { join } from "node:path";
 import { bootstrap, type Management, markMigrationApplied, migrateTenant, migrationStatus } from "../../management";
