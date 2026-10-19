@@ -1,0 +1,89 @@
+# Production-like stack: postgres-0 (platform + db0), postgres-1 (db1), PgBouncer (transaction pooling), Redis, app, worker and a
+# one-shot migrate. The application processes point DATABASE_URLS at PgBouncer, while management (migrate/CLI) goes straight to PostgreSQL.
+# Only app is exposed to the host (127.0.0.1:18080). The passwords are for this local test only.
+name: repo-e2e
+
+x-postgres: &postgres
+  image: postgres:16.15-alpine
+  environment: {POSTGRES_DB: app, POSTGRES_USER: admin, POSTGRES_PASSWORD: local_admin_password}
+  # log_lock_waits: lock waits longer than 200 ms are written to the log (collected into results at the end of the test).
+  command: [postgres, -c, shared_buffers=48MB, -c, max_connections=60, -c, log_lock_waits=on, -c, deadlock_timeout=200ms]
+  mem_limit: 256m
+  healthcheck: {test: ['CMD-SHELL', 'pg_isready -U admin -d app'], interval: 2s, timeout: 2s, retries: 30}
+
+x-bun: &bun
+  build: {context: ../.., dockerfile: packages/e2e/Dockerfile}
+  image: repo-e2e-bun:local
+  working_dir: /repo/packages/e2e
+  environment: &runtime-env
+    # Through PgBouncer (transaction pooling); the order matches the direct URLs.
+    DATABASE_URLS: postgres://admin:local_admin_password@pgbouncer:5432/db0,postgres://admin:local_admin_password@pgbouncer:5432/db1
+    REDIS_URL: redis://redis:6379
+    BETTER_AUTH_SECRET: e2e-only-secret-0123456789abcdef-0123456789
+    PLACEMENT_LOCAL_TTL_MS: '2000'
+    PLACEMENT_TTL_SECONDS: '5'
+
+services:
+  postgres-0:
+    <<: *postgres
+    volumes: ['postgres0:/var/lib/postgresql/data']
+  postgres-1:
+    <<: *postgres
+    volumes: ['postgres1:/var/lib/postgresql/data']
+
+  pgbouncer:
+    # The local PgBouncer image and config of packages/db-multi (pool_mode = transaction, max_prepared_statements = 0).
+    build: ../db-multi/src/core/local/pgbouncer
+    volumes:
+      - '../db-multi/src/core/local/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro'
+      - '../db-multi/src/core/local/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro'
+    mem_limit: 32m
+    depends_on: {postgres-0: {condition: service_healthy}, postgres-1: {condition: service_healthy}}
+    healthcheck: {test: ['CMD-SHELL', 'nc -z 127.0.0.1 5432'], interval: 2s, timeout: 2s, retries: 30}
+
+  redis:
+    image: redis:7.4-alpine
+    # BullMQ requires noeviction; persistence is off (test stack).
+    command: [redis-server, --save, '', --appendonly, 'no', --maxmemory, 48mb, --maxmemory-policy, noeviction]
+    mem_limit: 64m
+    healthcheck: {test: ['CMD', 'redis-cli', 'ping'], interval: 2s, timeout: 2s, retries: 30}
+
+  migrate:
+    <<: *bun
+    working_dir: /repo
+    # Management needs a direct connection (session advisory lock). The test runs CLI commands with `compose run --rm --no-deps migrate …`.
+    command: [bun, run, --cwd, packages/db-multi, cli, bootstrap]
+    environment:
+      DATABASE_URLS: postgres://admin:local_admin_password@postgres-0:5432/app,postgres://admin:local_admin_password@postgres-1:5432/app
+    volumes: ['./fixtures:/fixtures:ro', './.work:/work']
+    mem_limit: 256m
+    restart: 'no'
+    depends_on: {postgres-0: {condition: service_healthy}, postgres-1: {condition: service_healthy}}
+
+  app:
+    <<: *bun
+    command: [bun, src/app.ts]
+    ports: ['127.0.0.1:18080:8080']
+    mem_limit: 256m
+    depends_on: &after-migrate
+      migrate: {condition: service_completed_successfully}
+      pgbouncer: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ['CMD', 'bun', '-e', 'const r = await fetch("http://127.0.0.1:8080/health"); process.exit(r.ok ? 0 : 1)']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  worker:
+    <<: *bun
+    command: [bun, src/worker.ts]
+    environment:
+      <<: *runtime-env
+      CRON_INTERVAL_MS: '3000'
+    mem_limit: 128m
+    depends_on: *after-migrate
+
+volumes:
+  postgres0:
+  postgres1:

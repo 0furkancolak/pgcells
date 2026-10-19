@@ -1,0 +1,499 @@
+{
+ "schema": "repo-db-bench/spans@1",
+ "run": "spans-2026-09-15T11-08-05Z",
+ "driver": "bun",
+ "startedAt": "2026-09-15T11:08:48.754Z",
+ "summary": {
+  "": {
+   "db.acquire": {
+    "count": 5,
+    "p50Ms": 0.02,
+    "p95Ms": 4.31,
+    "maxMs": 4.31,
+    "totalMs": 7.62
+   },
+   "db.transaction": {
+    "count": 5,
+    "p50Ms": 3.12,
+    "p95Ms": 6.55,
+    "maxMs": 6.55,
+    "totalMs": 17.54
+   }
+  },
+  "provision": {
+   "tenant.lock": {
+    "count": 6,
+    "p50Ms": 3.96,
+    "p95Ms": 8.62,
+    "maxMs": 8.62,
+    "totalMs": 28.41
+   },
+   "db.acquire": {
+    "count": 84,
+    "p50Ms": 0.01,
+    "p95Ms": 0.04,
+    "maxMs": 0.09,
+    "totalMs": 1.43
+   },
+   "db.transaction": {
+    "count": 84,
+    "p50Ms": 0.6,
+    "p95Ms": 2,
+    "maxMs": 5.46,
+    "totalMs": 72.69
+   },
+   "provision.pick": {
+    "count": 6,
+    "p50Ms": 4.43,
+    "p95Ms": 8.37,
+    "maxMs": 8.37,
+    "totalMs": 29.65
+   },
+   "tenant.session": {
+    "count": 6,
+    "p50Ms": 3.74,
+    "p95Ms": 5.76,
+    "maxMs": 5.76,
+    "totalMs": 22.41
+   },
+   "provision.claim": {
+    "count": 6,
+    "p50Ms": 2.21,
+    "p95Ms": 5.56,
+    "maxMs": 5.56,
+    "totalMs": 17.25
+   },
+   "provision.schema": {
+    "count": 6,
+    "p50Ms": 0.78,
+    "p95Ms": 1.06,
+    "maxMs": 1.06,
+    "totalMs": 4.87
+   },
+   "migration 20260901000000_initial": {
+    "count": 6,
+    "p50Ms": 6.93,
+    "p95Ms": 9.66,
+    "maxMs": 9.66,
+    "totalMs": 44.15
+   },
+   "migration 20260901000050_better_auth": {
+    "count": 6,
+    "p50Ms": 13.51,
+    "p95Ms": 19.36,
+    "maxMs": 19.36,
+    "totalMs": 86.03
+   },
+   "migration 20260901000060_user_imports": {
+    "count": 6,
+    "p50Ms": 4.43,
+    "p95Ms": 5.6,
+    "maxMs": 5.6,
+    "totalMs": 27.69
+   },
+   "migration 20260901000100_student_status": {
+    "count": 6,
+    "p50Ms": 1.29,
+    "p95Ms": 1.63,
+    "maxMs": 1.63,
+    "totalMs": 7.77
+   },
+   "migration 20260901000200_student_name_index": {
+    "count": 6,
+    "p50Ms": 4.63,
+    "p95Ms": 5.78,
+    "maxMs": 5.78,
+    "totalMs": 29.21
+   },
+   "seed 20260901000000_courses": {
+    "count": 6,
+    "p50Ms": 1.15,
+    "p95Ms": 1.96,
+    "maxMs": 1.96,
+    "totalMs": 7.6
+   },
+   "provision.activate": {
+    "count": 6,
+    "p50Ms": 1.07,
+    "p95Ms": 1.68,
+    "maxMs": 1.68,
+    "totalMs": 7
+   },
+   "total": {
+    "count": 6,
+    "p50Ms": 58.92,
+    "p95Ms": 90.7,
+    "maxMs": 90.7,
+    "totalMs": 387.47
+   }
+  },
+  "provision-demo": {
+   "tenant.lock": {
+    "count": 1,
+    "p50Ms": 3.6,
+    "p95Ms": 3.6,
+    "maxMs": 3.6,
+    "totalMs": 3.6
+   },
+   "db.acquire": {
+    "count": 16,
+    "p50Ms": 0.02,
+    "p95Ms": 0.05,
+    "maxMs": 0.05,
+    "totalMs": 0.33
+   },
+   "db.transaction": {
+    "count": 16,
+    "p50Ms": 0.46,
+    "p95Ms": 2.61,
+    "maxMs": 2.61,
+    "totalMs": 10.51
+   },
+   "provision.pick": {
+    "count": 1,
+    "p50Ms": 3.37,
+    "p95Ms": 3.37,
+    "maxMs": 3.37,
+    "totalMs": 3.37
+   },
+   "tenant.session": {
+    "count": 1,
+    "p50Ms": 3.46,
+    "p95Ms": 3.46,
+    "maxMs": 3.46,
+    "totalMs": 3.46
+   },
+   "provision.claim": {
+    "count": 1,
+    "p50Ms": 2.67,
+    "p95Ms": 2.67,
+    "maxMs": 2.67,
+    "totalMs": 2.67
+   },
+   "provision.schema": {
+    "count": 1,
+    "p50Ms": 0.73,
+    "p95Ms": 0.73,
+    "maxMs": 0.73,
+    "totalMs": 0.73
+   },
+   "migration 20260901000000_initial": {
+    "count": 1,
+    "p50Ms": 6.88,
+    "p95Ms": 6.88,
+    "maxMs": 6.88,
+    "totalMs": 6.88
+   },
+   "migration 20260901000050_better_auth": {
+    "count": 1,
+    "p50Ms": 13.72,
+    "p95Ms": 13.72,
+    "maxMs": 13.72,
+    "totalMs": 13.72
+   },
+   "migration 20260901000060_user_imports": {
+    "count": 1,
+    "p50Ms": 4.1,
+    "p95Ms": 4.1,
+    "maxMs": 4.1,
+    "totalMs": 4.1
+   },
+   "migration 20260901000100_student_status": {
+    "count": 1,
+    "p50Ms": 1.17,
+    "p95Ms": 1.17,
+    "maxMs": 1.17,
+    "totalMs": 1.17
+   },
+   "migration 20260901000200_student_name_index": {
+    "count": 1,
+    "p50Ms": 5.25,
+    "p95Ms": 5.25,
+    "maxMs": 5.25,
+    "totalMs": 5.25
+   },
+   "seed 20260901000000_courses": {
+    "count": 1,
+    "p50Ms": 1.22,
+    "p95Ms": 1.22,
+    "maxMs": 1.22,
+    "totalMs": 1.22
+   },
+   "seed 20260901000100_students": {
+    "count": 1,
+    "p50Ms": 1.54,
+    "p95Ms": 1.54,
+    "maxMs": 1.54,
+    "totalMs": 1.54
+   },
+   "seed 20260915000100_demo_login": {
+    "count": 1,
+    "p50Ms": 54.75,
+    "p95Ms": 54.75,
+    "maxMs": 54.75,
+    "totalMs": 54.75
+   },
+   "provision.activate": {
+    "count": 1,
+    "p50Ms": 1.26,
+    "p95Ms": 1.26,
+    "maxMs": 1.26,
+    "totalMs": 1.26
+   },
+   "total": {
+    "count": 1,
+    "p50Ms": 115.95,
+    "p95Ms": 115.95,
+    "maxMs": 115.95,
+    "totalMs": 115.95
+   }
+  },
+  "migrate-all-noop": {
+   "db.acquire": {
+    "count": 5,
+    "p50Ms": 0.01,
+    "p95Ms": 0.02,
+    "maxMs": 0.02,
+    "totalMs": 0.06
+   },
+   "db.transaction": {
+    "count": 5,
+    "p50Ms": 1.23,
+    "p95Ms": 2.78,
+    "maxMs": 2.78,
+    "totalMs": 6.61
+   },
+   "total": {
+    "count": 1,
+    "p50Ms": 13.11,
+    "p95Ms": 13.11,
+    "maxMs": 13.11,
+    "totalMs": 13.11
+   }
+  },
+  "seed-all-noop": {
+   "db.acquire": {
+    "count": 695,
+    "p50Ms": 0.01,
+    "p95Ms": 0.04,
+    "maxMs": 1.92,
+    "totalMs": 20.27
+   },
+   "db.transaction": {
+    "count": 695,
+    "p50Ms": 1.85,
+    "p95Ms": 3.61,
+    "maxMs": 8.18,
+    "totalMs": 1386.66
+   },
+   "tenant.lock": {
+    "count": 173,
+    "p50Ms": 7.46,
+    "p95Ms": 10.41,
+    "maxMs": 13.72,
+    "totalMs": 1312.48
+   },
+   "tenant.session": {
+    "count": 173,
+    "p50Ms": 7.58,
+    "p95Ms": 11.02,
+    "maxMs": 16.62,
+    "totalMs": 1349.48
+   },
+   "total": {
+    "count": 1,
+    "p50Ms": 583.03,
+    "p95Ms": 583.03,
+    "maxMs": 583.03,
+    "totalMs": 583.03
+   }
+  },
+  "backup-full": {
+   "db.acquire": {
+    "count": 31,
+    "p50Ms": 0.01,
+    "p95Ms": 0.02,
+    "maxMs": 0.02,
+    "totalMs": 0.31
+   },
+   "db.transaction": {
+    "count": 31,
+    "p50Ms": 2.7,
+    "p95Ms": 85.93,
+    "maxMs": 90.24,
+    "totalMs": 533.23
+   },
+   "backup.tenant": {
+    "count": 6,
+    "p50Ms": 88.41,
+    "p95Ms": 110.06,
+    "maxMs": 110.06,
+    "totalMs": 520.36
+   },
+   "total": {
+    "count": 1,
+    "p50Ms": 280.38,
+    "p95Ms": 280.38,
+    "maxMs": 280.38,
+    "totalMs": 280.38
+   }
+  },
+  "backup-incremental": {
+   "db.acquire": {
+    "count": 13,
+    "p50Ms": 0.03,
+    "p95Ms": 0.2,
+    "maxMs": 0.2,
+    "totalMs": 0.47
+   },
+   "db.transaction": {
+    "count": 13,
+    "p50Ms": 8.66,
+    "p95Ms": 29,
+    "maxMs": 29,
+    "totalMs": 125.46
+   },
+   "backup.tenant": {
+    "count": 6,
+    "p50Ms": 18.79,
+    "p95Ms": 29.1,
+    "maxMs": 29.1,
+    "totalMs": 114.09
+   },
+   "total": {
+    "count": 1,
+    "p50Ms": 11188,
+    "p95Ms": 11188,
+    "maxMs": 11188,
+    "totalMs": 11188
+   }
+  },
+  "move": {
+   "db.acquire": {
+    "count": 39,
+    "p50Ms": 0.01,
+    "p95Ms": 6.21,
+    "maxMs": 14.5,
+    "totalMs": 21.45
+   },
+   "db.transaction": {
+    "count": 39,
+    "p50Ms": 1.59,
+    "p95Ms": 71.93,
+    "maxMs": 162.81,
+    "totalMs": 392.83
+   },
+   "move.maintenance": {
+    "count": 1,
+    "p50Ms": 30011.6,
+    "p95Ms": 30011.6,
+    "maxMs": 30011.6,
+    "totalMs": 30011.6
+   },
+   "move.copying": {
+    "count": 1,
+    "p50Ms": 126.98,
+    "p95Ms": 126.98,
+    "maxMs": 126.98,
+    "totalMs": 126.98
+   },
+   "move.validated": {
+    "count": 1,
+    "p50Ms": 192.07,
+    "p95Ms": 192.07,
+    "maxMs": 192.07,
+    "totalMs": 192.07
+   },
+   "move.cutover": {
+    "count": 1,
+    "p50Ms": 7.85,
+    "p95Ms": 7.85,
+    "maxMs": 7.85,
+    "totalMs": 7.85
+   },
+   "total": {
+    "count": 1,
+    "p50Ms": 30389.48,
+    "p95Ms": 30389.48,
+    "maxMs": 30389.48,
+    "totalMs": 30389.48
+   }
+  },
+  "request-point-cold": {
+   "db.query": {
+    "count": 10,
+    "p50Ms": 0.42,
+    "p95Ms": 6.43,
+    "maxMs": 6.43,
+    "totalMs": 15.19
+   },
+   "placement.read": {
+    "count": 5,
+    "p50Ms": 0.23,
+    "p95Ms": 6.49,
+    "maxMs": 6.49,
+    "totalMs": 7.56
+   },
+   "total": {
+    "count": 5,
+    "p50Ms": 0.64,
+    "p95Ms": 12.71,
+    "maxMs": 12.71,
+    "totalMs": 15.7
+   }
+  },
+  "request-point-cached": {
+   "placement.cache": {
+    "count": 200,
+    "p50Ms": 0,
+    "p95Ms": 0,
+    "maxMs": 0,
+    "totalMs": 0
+   },
+   "db.query": {
+    "count": 200,
+    "p50Ms": 0.15,
+    "p95Ms": 0.2,
+    "maxMs": 0.77,
+    "totalMs": 32.24
+   },
+   "total": {
+    "count": 200,
+    "p50Ms": 0.16,
+    "p95Ms": 0.2,
+    "maxMs": 0.77,
+    "totalMs": 33.23
+   }
+  },
+  "request-insert-transaction": {
+   "placement.cache": {
+    "count": 100,
+    "p50Ms": 0,
+    "p95Ms": 0,
+    "maxMs": 0,
+    "totalMs": 0
+   },
+   "db.acquire": {
+    "count": 100,
+    "p50Ms": 0,
+    "p95Ms": 0.01,
+    "maxMs": 0.01,
+    "totalMs": 0.55
+   },
+   "db.transaction": {
+    "count": 100,
+    "p50Ms": 2,
+    "p95Ms": 3.17,
+    "maxMs": 3.59,
+    "totalMs": 218.88
+   },
+   "total": {
+    "count": 100,
+    "p50Ms": 2.03,
+    "p95Ms": 3.2,
+    "maxMs": 3.66,
+    "totalMs": 220.44
+   }
+  }
+ }
+}

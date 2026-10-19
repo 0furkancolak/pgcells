@@ -1,0 +1,22 @@
+{
+  "schema": "repo-db-bench/hotpath@1",
+  "script": "src/__tests__/bench/hotpath.ts <driver> 4 32",
+  "setup": "in-process, 32 concurrent loops for 4 s, point read through PgBouncer transaction pooling (2 PostgreSQL 16 + PgBouncer, local Docker), 4 tenants × 1000 rows, poolMax 10; second of two rounds",
+  "routes": {
+    "raw": "driver pool.query with hand-written schema-qualified SQL, placement known in advance",
+    "withTenant": "db.withTenant(tenantId, ...) — resolves the placement itself",
+    "forPlacement": "db.withTenant.forPlacement(placement, ...) — placement supplied (Redis/cache)"
+  },
+  "before": {
+    "change": "every withTenant read the placement from the platform DB; every single query reserved a connection with a deadline timer",
+    "bun": { "raw": { "rps": 30651, "p50Ms": 1.02, "p99Ms": 2.32 }, "withTenant": { "rps": 12439, "p50Ms": 2.59, "p99Ms": 4.2 }, "forPlacement": { "rps": 29026, "p50Ms": 1.07, "p99Ms": 2.3 } },
+    "postgres": { "raw": { "rps": 16512, "p50Ms": 1.91, "p99Ms": 3.6 }, "withTenant": { "rps": 6999, "p50Ms": 4.63, "p99Ms": 7.17 }, "forPlacement": { "rps": 16140, "p50Ms": 1.96, "p99Ms": 3.53 } },
+    "pg": { "raw": { "rps": 27019, "p50Ms": 1.13, "p99Ms": 2.76 }, "withTenant": { "rps": 9850, "p50Ms": 3.11, "p99Ms": 6.35 }, "forPlacement": { "rps": 23275, "p50Ms": 1.28, "p99Ms": 3.33 } }
+  },
+  "after": {
+    "change": "in-process active placement cache (placementCacheMs 5 s, bounded by PLACEMENT_CACHE_MAX_MS; moves wait placementCacheWaitMs 30 s) and direct pool.query while a connection is free",
+    "bun": { "raw": { "rps": 30862, "p50Ms": 1.01, "p99Ms": 2.26 }, "withTenant": { "rps": 28262, "p50Ms": 1.06, "p99Ms": 2.52 }, "forPlacement": { "rps": 29723, "p50Ms": 1.05, "p99Ms": 2.2 } },
+    "postgres": { "raw": { "rps": 16750, "p50Ms": 1.87, "p99Ms": 3.54 }, "withTenant": { "rps": 16207, "p50Ms": 1.95, "p99Ms": 3.7 }, "forPlacement": { "rps": 16318, "p50Ms": 1.94, "p99Ms": 3.57 } },
+    "pg": { "raw": { "rps": 29773, "p50Ms": 1.04, "p99Ms": 2.24 }, "withTenant": { "rps": 28740, "p50Ms": 1.08, "p99Ms": 2.39 }, "forPlacement": { "rps": 28577, "p50Ms": 1.08, "p99Ms": 2.37 } }
+  }
+}

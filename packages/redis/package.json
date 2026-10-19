@@ -1,0 +1,70 @@
+{
+  "name": "@0furkancolak/pgcells-redis",
+  "version": "0.1.0",
+  "description": "Redis helpers for pgcells: placement cache with cross-process invalidation, auth storage, cache and tenant-aware queues.",
+  "license": "Apache-2.0",
+  "keywords": [
+    "redis",
+    "bullmq",
+    "cache",
+    "multi-tenant",
+    "typescript"
+  ],
+  "homepage": "https://github.com/0furkancolak/pgcells#readme",
+  "bugs": {
+    "url": "https://github.com/0furkancolak/pgcells/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0furkancolak/pgcells.git",
+    "directory": "packages/redis"
+  },
+  "type": "module",
+  "engines": {
+    "bun": ">=1.3.14",
+    "node": ">=22"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test src/__tests__/unit",
+    "test:integration": "RUN_REDIS=1 bun test --timeout 60000 src/__tests__/integration",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "eslint . --fix",
+    "bench": "bun src/bench.ts",
+    "build": "bun ../../scripts/build-package.ts",
+    "typecheck:build": "tsc -p tsconfig.build.json",
+    "test:build": "bun test --timeout 240000 src/__tests__/build",
+    "prepack": "bun run build && bun ../../scripts/pack-manifest.ts prepack",
+    "postpack": "bun ../../scripts/pack-manifest.ts postpack"
+  },
+  "dependencies": {
+    "bullmq": "5.81.5",
+    "ioredis": "5.11.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@0furkancolak/pgcells": "workspace:*",
+    "@types/bun": "1.3.0",
+    "eslint": "9.39.5",
+    "typescript": "5.9.2",
+    "typescript-eslint": "8.70.0"
+  },
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "files": [
+    "dist",
+    "docs",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "peerDependencies": {
+    "@0furkancolak/pgcells": "workspace:^"
+  }
+}

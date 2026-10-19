@@ -1,0 +1,9 @@
+**/node_modules
+**/dist
+**/.env
+**/.wrangler
+.git
+.claude
+packages/e2e/.work
+packages/e2e/results
+packages/db-multi/src/__tests__/bench/results

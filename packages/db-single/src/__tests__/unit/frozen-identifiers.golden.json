@@ -1,0 +1,19 @@
+{
+  "files": {
+    "src/migrations/20261005094046_auth.sql": "c4e52082df87c19b3d91709e7d4743de2bda6265d3f98257d6958221d342de95"
+  },
+  "needles": [
+    {
+      "file": "src/core/auth-adapter.ts",
+      "text": "adapterName: \"@repo/db-single\""
+    },
+    {
+      "file": "src/core/locks.ts",
+      "text": "hashtextextended($1,0)"
+    },
+    {
+      "file": "src/core/locks.ts",
+      "text": "export const MIGRATION_KEY = \"migration\";"
+    }
+  ]
+}

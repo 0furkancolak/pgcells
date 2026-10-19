@@ -1,0 +1,121 @@
+name: checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: packages/db-multi
+    env:
+      WRANGLER_SEND_METRICS: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          # Bun SQL with prepare:false behind PgBouncer transaction pooling fails on 1.3.6 ("unnamed prepared statement does not exist").
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      # codegen --check: queries, migration and seed lists (src/{migrations,seeds}/*/index.gen.ts) and folded table types, no database.
+      - run: bun run codegen --check && bun run typecheck && bun run lint && bun run test && bun run build && bun run build:workers
+      - run: docker compose up -d --wait && cp .env.example .env
+      - name: Bootstrap (twice, idempotent) and read-only readiness check
+        run: |
+          bun run cli bootstrap
+          bun run cli bootstrap
+          # --pgbouncer-url takes no value: the URL is never written to argv; it is read from hidden input (stdin here).
+          printf '%s\n' "postgres://admin:local_admin_password@127.0.0.1:5543/pgbouncer" | bun run tools doctor --pgbouncer-url
+      - name: Direct-connection doctor per driver
+        run: |
+          bun run tools doctor --driver=postgres
+          bun run tools doctor --driver=pg
+      - name: CLI demo tenant (provision with seeds, reset)
+        run: |
+          bun run cli provision ci-demo --demo
+          bun run cli seed ci-demo --profile demo --dry-run
+          bun run cli demo-reset ci-demo
+      # Better Auth schema drift: regenerating from the committed options must not write a new tenant migration.
+      - name: Better Auth migration is up to date
+        run: |
+          bun run cli auth generate src/__tests__/fixtures/auth-options.ts | grep -q '"created": false'
+          test -z "$(git status --porcelain src/migrations)"
+      # Management uses direct URLs from .env; runtime tests go through PgBouncer transaction pooling.
+      - name: PostgreSQL + PgBouncer integration per driver (bun, postgres, pg)
+        run: |
+          for driver in bun postgres pg; do
+            echo "::group::DB_DRIVER=$driver"
+            DB_DRIVER=$driver bun run test:integration
+            echo "::endgroup::"
+          done
+      # @0furkancolak/pgcells-redis: placement cache, cache and BullMQ against a real Redis and the same PostgreSQL.
+      - name: Redis package checks and integration
+        working-directory: packages/redis
+        run: |
+          docker run -d --name ci-redis -p 127.0.0.1:6390:6379 redis:7.4-alpine
+          bun run typecheck && bun run lint && bun run test && bun run test:integration
+      - if: always()
+        run: docker compose down -v
+  # db-single: isolated compose (project name dbsingle, 5560/5563/5565/5566/5489); runs independently of the db-multi job.
+  db-single:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: packages/db-single
+    env:
+      WRANGLER_SEND_METRICS: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      # db:codegen --check: query modules, migration/seed lists and table types (src/**/*.gen.ts), no database needed.
+      - run: bun run db:codegen --check && bun run typecheck && bun run lint && bun run test && bun run build && bun run build:workers
+      - run: docker compose up -d --wait && cp .env.example .env
+      # Better Auth schema drift: regenerating from the same options must not write a new migration.
+      - name: Better Auth migration is up to date
+        run: |
+          bun run cli auth generate src/__tests__/fixtures/auth-options.ts | grep -q '"created": false'
+          test -z "$(git status --porcelain src/migrations)"
+      # Management uses the direct URL (.env); runtime tests use PgBouncer transaction pooling.
+      - name: PostgreSQL + PgBouncer integration per driver (bun, postgres, pg)
+        run: |
+          for driver in bun postgres pg; do
+            echo "::group::DB_DRIVER=$driver"
+            DB_DRIVER=$driver bun run test:integration
+            echo "::endgroup::"
+          done
+      - if: always()
+        run: docker compose down -v
+  # Repository-wide guards and the published packages: tarball contents, install into a clean
+  # project, imports under Node 22 and Bun, type resolution through `exports`.
+  packages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - name: Scope and wording guards
+        run: |
+          bash scripts/check-no-legacy-scope.sh
+          bash scripts/check-wording.sh
+          bash scripts/check-english.sh
+          bun scripts/check-doc-links.ts
+      - name: dist imports under Node
+        run: |
+          bun run --cwd packages/db-multi test:build
+          bun run --cwd packages/db-single test:build
+      - name: Pack smoke test
+        run: bash scripts/smoke-pack.sh

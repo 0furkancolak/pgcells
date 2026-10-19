@@ -1,0 +1,7 @@
+{
+  // Only for `bun run build:workers` (dry-run bundle check); never deployed.
+  "name": "db-workers-check",
+  "main": "worker.ts",
+  "compatibility_date": "2026-09-07",
+  "compatibility_flags": ["nodejs_compat"]
+}

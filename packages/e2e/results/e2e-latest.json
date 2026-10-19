@@ -1,0 +1,158 @@
+{
+ "finishedAt": "2026-09-16T12:04:05.958Z",
+ "results": {
+  "stack": {
+   "readyMs": 23
+  },
+  "provision": {
+   "kadikoyMs": 696,
+   "modaMs": 658,
+   "sisliMs": 695,
+   "databases": [
+    {
+     "databaseId": "db0",
+     "status": "active",
+     "capacity": 1000,
+     "tenants": 1,
+     "load": 20,
+     "configured": true
+    },
+    {
+     "databaseId": "db1",
+     "status": "active",
+     "capacity": 1000,
+     "tenants": 2,
+     "load": 11,
+     "configured": true
+    }
+   ]
+  },
+  "auth": {
+   "signUpMs": 66,
+   "signInMs": 42
+  },
+  "queue": {
+   "queueToRowMs": 107,
+   "cronMs": 719,
+   "cronTickMs": 8
+  },
+  "usersImport": {
+   "firstMs": 512,
+   "againMs": 549
+  },
+  "appMigrate": {
+   "splitMs": 421,
+   "dryRunMs": 529,
+   "migrateMs": 522,
+   "rerunMs": 586
+  },
+  "backup": {
+   "fullMs": 668,
+   "incrementalUnchangedMs": 11619,
+   "incrementalChangedMs": 11757,
+   "exportMs": 585,
+   "restoreMs": 744,
+   "restoredRows": 8,
+   "notFoundAfterLossMs": 207,
+   "servedAfterRestoreMs": 2
+  },
+  "readiness": {
+   "downDetectedMs": 6508,
+   "readyCalls": [
+    {
+     "status": 503,
+     "ms": 6508,
+     "error": "DATABASE_UNAVAILABLE"
+    }
+   ],
+   "db0TenantStatus": 200,
+   "db1TenantStatus": 504,
+   "db1TenantError": "DATABASE_TIMEOUT",
+   "db1FirstRequestMs": 6513,
+   "db1SecondRequestMs": 6518,
+   "readyAfterStartMs": 508,
+   "db1TenantRecoveredMs": 513
+  },
+  "move": {
+   "moveResult": {
+    "id": "865026e1-8598-44a1-b709-ebad3008f202",
+    "tenantId": "kadikoy",
+    "targetDatabaseId": "db1",
+    "source": {
+     "tenantId": "kadikoy",
+     "databaseId": "db0",
+     "kind": "tenant",
+     "schemaName": "tenant_kadikoy",
+     "status": "active",
+     "schemaVersion": 3,
+     "placementVersion": 1
+    },
+    "ownerId": "e5417129-260c-49ad-b3de-905f860dd7d3",
+    "status": "completed",
+    "phase": "completed",
+    "fingerprint": "7283f9b0a5430ad33a8a9ad364efdf263199b1cc5c8c80f0f2a8d4c73a6e7584",
+    "error": null
+   },
+   "cliBaselineMs": 745,
+   "moveCliMs": 30977,
+   "refreshAfterMoveMs": 2,
+   "placementCacheWaitMs": 30000,
+   "cacheBoundMs": 7000,
+   "rowsBeforeMove": 1882,
+   "rowsAfterMove": 3239,
+   "readsDuringMove": {
+    "200": 98,
+    "503": 484
+   },
+   "sinceMoveMs": 4541
+  },
+  "restart": {
+   "pgbouncerRecoveryMs": 111,
+   "failedRequestsDuringPgbouncerRestart": 1,
+   "redisDownWarmMs": 1,
+   "redisDownColdMs": 510,
+   "redisDownInsertMs": 10,
+   "queueRecoveredAfterRedisStartMs": 1013
+  },
+  "k6": {
+   "exitCode": 0,
+   "read": {
+    "requests": 2001,
+    "failedRate": 0,
+    "p50Ms": 1.193,
+    "p95Ms": 3.832,
+    "p99Ms": 4.667,
+    "maxMs": 8.837
+   },
+   "insert": {
+    "requests": 2001,
+    "failedRate": 0,
+    "p50Ms": 2.454,
+    "p95Ms": 4.835,
+    "p99Ms": 6.797,
+    "maxMs": 17.222
+   },
+   "inserted": 2001,
+   "droppedIterations": 0
+  }
+ },
+ "containers": {
+  "stats": [
+   "repo-e2e-app-1 mem=125MiB / 256MiB cpu=0.27%",
+   "repo-e2e-pgbouncer-1 mem=6.859MiB / 32MiB cpu=1.60%",
+   "repo-e2e-postgres-0-1 mem=21.71MiB / 256MiB cpu=1.09%",
+   "repo-e2e-postgres-1-1 mem=23.63MiB / 256MiB cpu=1.17%",
+   "repo-e2e-redis-1 mem=12.53MiB / 64MiB cpu=0.51%",
+   "repo-e2e-worker-1 mem=77.23MiB / 128MiB cpu=1.81%"
+  ],
+  "state": [
+   "/repo-e2e-app-1 oomKilled=false restarts=0",
+   "/repo-e2e-pgbouncer-1 oomKilled=false restarts=0",
+   "/repo-e2e-postgres-0-1 oomKilled=false restarts=0",
+   "/repo-e2e-postgres-1-1 oomKilled=false restarts=0",
+   "/repo-e2e-redis-1 oomKilled=false restarts=0",
+   "/repo-e2e-worker-1 oomKilled=false restarts=0"
+  ],
+  "lockWaits": []
+ }
+}

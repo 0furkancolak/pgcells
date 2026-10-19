@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.env
+*.dump
+*.sql.gz
+*.sql.gz.partial
+coverage/
+.superpowers/
+.wrangler/
+
+.claude/worktrees/
+.tmp-*
+package.json.prepack
+packages/*/LICENSE
+packages/*/NOTICE

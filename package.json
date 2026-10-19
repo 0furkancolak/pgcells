@@ -1,0 +1,39 @@
+{
+  "name": "pgcells-monorepo",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "db": "bun run --cwd packages/db-multi",
+    "db:pull": "bun run --cwd packages/db-multi db:pull",
+    "db:codegen": "bun run --cwd packages/db-multi db:codegen",
+    "db:generate:tenant": "bun run --cwd packages/db-multi db:generate:tenant",
+    "db:generate:platform": "bun run --cwd packages/db-multi db:generate:platform",
+    "db:generate:node": "bun run --cwd packages/db-multi db:generate:node",
+    "db:generate:seed": "bun run --cwd packages/db-multi db:generate:seed",
+    "db:generate:seed:demo": "bun run --cwd packages/db-multi db:generate:seed:demo",
+    "db:generate:auth": "bun run --cwd packages/db-multi db:generate:auth",
+    "db:migrate:platform": "bun run --cwd packages/db-multi db:migrate:platform",
+    "db:migrate:tenant": "bun run --cwd packages/db-multi db:migrate:tenant",
+    "db:migrate:all": "bun run --cwd packages/db-multi db:migrate:all",
+    "db:rollback:tenant": "bun run --cwd packages/db-multi db:rollback:tenant",
+    "db:status:tenant": "bun run --cwd packages/db-multi db:status:tenant",
+    "db:seed:tenant": "bun run --cwd packages/db-multi db:seed:tenant",
+    "db:seed:all": "bun run --cwd packages/db-multi db:seed:all",
+    "single": "bun run --cwd packages/db-single",
+    "single:migrate": "bun run --cwd packages/db-single db:migrate",
+    "single:rollback": "bun run --cwd packages/db-single db:rollback",
+    "single:status": "bun run --cwd packages/db-single db:status",
+    "single:seed": "bun run --cwd packages/db-single db:seed",
+    "single:generate": "bun run --cwd packages/db-single db:generate",
+    "single:codegen": "bun run --cwd packages/db-single db:codegen",
+    "single:pull": "bun run --cwd packages/db-single db:pull",
+    "changeset": "changeset",
+    "version-packages": "changeset version && bun install --lockfile-only",
+    "release": "bash scripts/publish.sh"
+  },
+  "devDependencies": {
+    "@changesets/cli": "3.0.3"
+  }
+}

@@ -1,0 +1,46 @@
+# Isolated local infrastructure (project name: dbsingle). postgres: direct connection (management, CLI, tests); pgbouncer: transaction pooling
+# (runtime tests); wsproxy: Neon driver test only; postgres-rp/postgres-rp-replica: replica tests (streaming replication).
+name: dbsingle
+services:
+  postgres:
+    image: postgres:16.15-alpine
+    environment: {POSTGRES_DB: app, POSTGRES_USER: admin, POSTGRES_PASSWORD: local_admin_password}
+    ports: ['127.0.0.1:5560:5432']
+    volumes: ['postgres:/var/lib/postgresql/data']
+    healthcheck: {test: ['CMD-SHELL', 'pg_isready -U admin -d app'], interval: 2s, timeout: 2s, retries: 30}
+  pgbouncer:
+    build: ./src/core/local/pgbouncer
+    ports: ['127.0.0.1:5563:5432']
+    volumes:
+      - './src/core/local/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro'
+      - './src/core/local/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro'
+    depends_on: {postgres: {condition: service_healthy}}
+    healthcheck: {test: ['CMD-SHELL', 'nc -z 127.0.0.1 5432'], interval: 2s, timeout: 2s, retries: 30}
+  # Local testing only: the Neon driver (WebSocket) reaches the host's Postgres/PgBouncer ports through this proxy.
+  wsproxy:
+    image: ghcr.io/neondatabase/wsproxy@sha256:7f2e2149aa6a57ba382a140102fba44f5053f3e44389ccc18adcecf896054efb
+    environment: {ALLOW_ADDR_REGEX: '.*'}
+    extra_hosts: ['host.docker.internal:host-gateway']
+    ports: ['127.0.0.1:5489:80']
+  # Replica tests only: a primary/replica pair with streaming replication (independent of postgres).
+  postgres-rp:
+    image: postgres:16.15-alpine
+    environment: {POSTGRES_DB: app, POSTGRES_USER: admin, POSTGRES_PASSWORD: local_admin_password}
+    ports: ['127.0.0.1:5565:5432']
+    volumes:
+      - 'postgresrp:/var/lib/postgresql/data'
+      - './src/core/local/replica/allow-replication.sh:/docker-entrypoint-initdb.d/allow-replication.sh:ro'
+    healthcheck: {test: ['CMD-SHELL', 'pg_isready -U admin -d app'], interval: 2s, timeout: 2s, retries: 30}
+  postgres-rp-replica:
+    image: postgres:16.15-alpine
+    entrypoint: ['sh', '/replica-entrypoint.sh']
+    ports: ['127.0.0.1:5566:5432']
+    volumes:
+      - 'postgresrpreplica:/var/lib/postgresql/data'
+      - './src/core/local/replica/replica-entrypoint.sh:/replica-entrypoint.sh:ro'
+    depends_on: {postgres-rp: {condition: service_healthy}}
+    healthcheck: {test: ['CMD-SHELL', 'pg_isready -U admin -d app'], interval: 2s, timeout: 2s, retries: 30}
+volumes:
+  postgres:
+  postgresrp:
+  postgresrpreplica:

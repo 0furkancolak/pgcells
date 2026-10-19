@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "paths": { "@0furkancolak/pgcells": ["../db-multi/dist/index.d.ts"], "@0furkancolak/pgcells/*": ["../db-multi/dist/*.d.ts"] }
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/__tests__/**", "src/bench.ts"]
+}

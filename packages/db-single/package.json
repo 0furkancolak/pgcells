@@ -1,0 +1,117 @@
+{
+  "name": "@0furkancolak/pgcells-single",
+  "version": "0.1.0",
+  "description": "Single-database PostgreSQL toolkit for TypeScript: compile-time SQL, transaction-pooler safe runtime, migrations, Better Auth adapter.",
+  "license": "Apache-2.0",
+  "keywords": [
+    "postgresql",
+    "pgbouncer",
+    "migrations",
+    "typescript",
+    "bun"
+  ],
+  "homepage": "https://github.com/0furkancolak/pgcells#readme",
+  "bugs": {
+    "url": "https://github.com/0furkancolak/pgcells/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0furkancolak/pgcells.git",
+    "directory": "packages/db-single"
+  },
+  "type": "module",
+  "engines": {
+    "bun": ">=1.3.14",
+    "node": ">=22"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./management": "./src/management.ts",
+    "./middleware": "./src/middleware.ts",
+    "./tools": "./src/tools.ts",
+    "./auth": "./src/auth.ts",
+    "./telemetry": "./src/telemetry.ts",
+    "./drivers/*": "./src/core/drivers/*.ts",
+    "./queries/*": "./src/queries/*.gen.ts",
+    "./repositories/*": "./src/repositories/*/index.ts",
+    "./tables/*": "./src/tables/*.gen.ts"
+  },
+  "scripts": {
+    "cli": "bun src/core/cli.ts",
+    "db:migrate": "bun src/core/cli.ts migrate",
+    "db:rollback": "bun src/core/cli.ts migrate-down",
+    "db:status": "bun src/core/cli.ts migration-status",
+    "db:seed": "bun src/core/cli.ts seed",
+    "db:generate": "bun src/core/cli.ts migration create",
+    "db:generate:seed": "bun src/core/cli.ts seed create",
+    "db:generate:auth": "bun src/core/cli.ts auth generate",
+    "db:pull": "bun src/core/cli.ts pull",
+    "db:codegen": "bun src/core/sql/codegen.ts",
+    "test": "bun test src/__tests__/unit",
+    "test:integration": "RUN_INTEGRATION=1 bun test --timeout 60000 --preload ./src/__tests__/integration/leak-guard.ts src/__tests__/integration",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "eslint . --fix",
+    "build:workers": "wrangler deploy --dry-run --config src/__tests__/fixtures/wrangler.jsonc",
+    "verify:provider": "bun src/__tests__/provider/verify.ts",
+    "build:check": "bun build src/index.ts src/management.ts src/middleware.ts src/tools.ts src/core/cli.ts src/core/drivers/bun.ts src/core/drivers/postgres.ts src/core/drivers/pg.ts src/core/drivers/neon.ts src/auth.ts src/telemetry.ts --target bun --outdir dist --external pg --external postgres --external better-auth --external @neondatabase/serverless",
+    "build": "bun ../../scripts/build-package.ts",
+    "typecheck:build": "tsc -p tsconfig.build.json",
+    "test:build": "bun test --timeout 180000 src/__tests__/build",
+    "prepack": "bun run build && bun ../../scripts/pack-manifest.ts prepack",
+    "postpack": "bun ../../scripts/pack-manifest.ts postpack"
+  },
+  "dependencies": {
+    "bcryptjs": "3.0.3",
+    "pgsql-ast-parser": "12.0.2",
+    "zod": "4.1.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@neondatabase/serverless": "1.2.0",
+    "@types/bun": "1.3.0",
+    "@types/pg": "8.23.1",
+    "better-auth": "1.7.5",
+    "eslint": "9.39.5",
+    "pg": "8.23.0",
+    "postgres": "3.4.7",
+    "typescript": "5.9.2",
+    "typescript-eslint": "8.70.0",
+    "wrangler": "4.71.0"
+  },
+  "peerDependencies": {
+    "@neondatabase/serverless": "^1.2.0",
+    "better-auth": "1.7.5",
+    "pg": "^8.23.0",
+    "postgres": "^3.4.7"
+  },
+  "peerDependenciesMeta": {
+    "@neondatabase/serverless": {
+      "optional": true
+    },
+    "better-auth": {
+      "optional": true
+    },
+    "pg": {
+      "optional": true
+    },
+    "postgres": {
+      "optional": true
+    }
+  },
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "files": [
+    "dist",
+    "docs",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "bin": {
+    "pgcells-single": "./src/core/cli.ts"
+  }
+}

@@ -1,0 +1,23 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes: { label: Package and version, placeholder: "@0furkancolak/pgcells 0.1.0" }
+    validations: { required: true }
+  - type: input
+    id: runtime
+    attributes: { label: Runtime, placeholder: "Bun 1.3.14 / Node 22 / Cloudflare Workers; driver bun|postgres|pg|neon" }
+    validations: { required: true }
+  - type: input
+    id: topology
+    attributes: { label: Database topology, placeholder: "PostgreSQL 16 behind PgBouncer 1.24 (transaction mode), 2 cells, 1 replica" }
+  - type: textarea
+    id: what
+    attributes: { label: What happened, description: Expected behavior, actual behavior, error code (for example POOLER_REQUIRED). Do not paste connection strings. }
+    validations: { required: true }
+  - type: textarea
+    id: repro
+    attributes: { label: Steps to reproduce }
+    validations: { required: true }

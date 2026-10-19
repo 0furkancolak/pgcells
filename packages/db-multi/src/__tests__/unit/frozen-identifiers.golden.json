@@ -1,0 +1,130 @@
+{
+  "files": {
+    "src/migrations/tenant/20260915155444_auth.sql": "4d879060a3928f502bc014aa05db5e075eabbbc27318f660bd06685637125d48",
+    "src/migrations/tenant/20260916092603_auth_rate_limits.sql": "13c4058af90503ad063080546d6cf27d328fb9052dfa237e7c9abcc910d1093c",
+    "src/migrations/tenant/20260915155445_user_imports.sql": "43c2ed808f5e405bd45d8d48abe6af61b0cdbd15842371c5659e71e936179234",
+    "src/migrations/platform/20260916092603_panel_auth.sql": "eeb506c951687609a4ae7792419201d3d04dea46e11875c63a8696c536d8e04f",
+    "src/migrations/platform/20260915155443_platform.sql": "79c1e40d6bd289a5cfb6c29c53f4a2cc29ee4d05c55e571c61681d6ab3ab14df",
+    "src/migrations/platform/20260915155444_tenancy.sql": "3c8342ec481093235b9399ad84595b922dcba949be9a0f1507a28b722e627ea0",
+    "src/migrations/node/20260915155443_platform.sql": "ca6394937547d7dce28b3a2ca145aed48fbb2e7f90ad90b725aad0bc27c9a502",
+    "src/seeds/demo/20260915155445_demo_login.ts": "5d37876317997911425d61b2071a85d40abc7a91bc78cedd95b8fdec2535cef1"
+  },
+  "needles": [
+    {
+      "file": "src/core/auth.ts",
+      "text": "salt: text.encode(\"@repo/db/auth\")"
+    },
+    {
+      "file": "src/core/auth-adapter.ts",
+      "text": "adapterName: \"@repo/db\""
+    },
+    {
+      "file": "src/core/migrations/source.ts",
+      "text": "-- @repo/db pull structure="
+    },
+    {
+      "file": "src/core/tenants/placement.ts",
+      "text": "hashtextextended('tenant-placement',0)"
+    },
+    {
+      "file": "src/core/operations/bootstrap.ts",
+      "text": "hashtextextended('platform-bootstrap',0)"
+    },
+    {
+      "file": "src/core/operations/locks.ts",
+      "text": "hashtextextended($1,0)"
+    },
+    {
+      "file": "src/core/operations/locks.ts",
+      "text": "export const RUNNER_KEY = \"migration-runner\";"
+    },
+    {
+      "file": "src/core/operations/locks.ts",
+      "text": "`tenant-operation:${tenantId}`"
+    },
+    {
+      "file": "src/core/operations/locks.ts",
+      "text": "`tenant-management:${tenantId}`"
+    }
+  ],
+  "errorCodes": [
+    "BACKUP_EXISTS",
+    "BACKUP_INVALID",
+    "BACKUP_NOT_FOUND",
+    "COLLATION_MISMATCH",
+    "COPY_FAILED",
+    "COPY_MISMATCH",
+    "DATABASE_BUSY",
+    "DATABASE_CLOSED",
+    "DATABASE_NOT_CONFIGURED",
+    "DATABASE_NOT_FOUND",
+    "DATABASE_NOT_REGISTERED",
+    "DATABASE_ORDER_CHANGED",
+    "DATABASE_TIMEOUT",
+    "DATABASE_UNAVAILABLE",
+    "DEMO_TENANT_REQUIRED",
+    "DIRECT_CONNECTION_REQUIRED",
+    "DUMP_FETCH_FAILED",
+    "DUMP_INVALID",
+    "EMPTY_SCHEMA",
+    "EXTENSION_MISMATCH",
+    "IMPORT_CONFLICT",
+    "IMPORT_INVALID",
+    "INVALID_CONFIG",
+    "INVALID_DATABASE_STATE",
+    "INVALID_IDENTIFIER",
+    "INVALID_QUERY",
+    "INVALID_SCHEMA",
+    "INVALID_TENANT_ID",
+    "LOCK_LOST",
+    "MAINTENANCE_REQUIRED",
+    "MIGRATIONS_PENDING",
+    "MIGRATION_CANCELLED",
+    "MIGRATION_DRIFT",
+    "MIGRATION_INDEX_INVALID",
+    "MIGRATION_INVALID",
+    "MIGRATION_IRREVERSIBLE",
+    "MIGRATION_NOT_APPLIED",
+    "MIGRATION_NOT_PENDING",
+    "MIGRATION_RECOVERY_REQUIRED",
+    "MIGRATION_RUNNER_BUSY",
+    "MOVE_NOT_FOUND",
+    "MOVE_TERMINAL",
+    "MOVE_UNFINISHED",
+    "NESTED_TRANSACTION",
+    "NO_CAPACITY",
+    "PLACEMENT_CONFLICT",
+    "POOLER_REQUIRED",
+    "PROVIDER_API_ERROR",
+    "PROVIDER_NODE_NOT_FOUND",
+    "PULL_UNSUPPORTED",
+    "QUERY_NOT_READ_ONLY",
+    "QUERY_SCOPE",
+    "REPLICA_CONFLICT",
+    "REPLICA_LAG_EXCEEDED",
+    "REPLICA_UNAVAILABLE",
+    "RESTORE_MISMATCH",
+    "ROLLBACK_NOT_ALLOWED",
+    "SAME_DATABASE",
+    "SCHEMA_DRIFT",
+    "SCHEMA_EXISTS",
+    "SCHEMA_MISMATCH",
+    "SOURCE_SCHEMA_MISSING",
+    "SQL_UNSUPPORTED",
+    "TARGET_EXISTS",
+    "TARGET_RESERVED",
+    "TENANT_BUSY",
+    "TENANT_CONFLICT",
+    "TENANT_EXISTS",
+    "TENANT_NOT_FOUND",
+    "TENANT_RESERVED",
+    "TENANT_UNAVAILABLE",
+    "TRANSACTION_CLOSED",
+    "TRANSACTION_REQUIRED",
+    "UNSUPPORTED",
+    "UNSUPPORTED_MOVE",
+    "UNSUPPORTED_PASSWORD_HASH",
+    "USAGE",
+    "VERSION_MISMATCH"
+  ]
+}

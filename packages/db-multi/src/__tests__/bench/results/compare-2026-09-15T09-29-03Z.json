@@ -1,0 +1,1059 @@
+{
+ "schema": "repo-db-bench/compare@1",
+ "run": "compare-2026-09-15T09-29-03Z",
+ "startedAt": "2026-09-15T09:29:03.384Z",
+ "environment": {
+  "git": {
+   "sha": "58e5327946d4fad7d1396aa67b7a3e98a2b4dc87",
+   "dirty": false
+  },
+  "versions": {
+   "bun": "1.3.14",
+   "k6": "k6 v2.1.0 (commit/devel, go1.26.4, darwin/arm64)",
+   "docker": "29.4.0",
+   "orbstack": "Version: 2.2.3 (2020300)",
+   "postgres": "postgres:16.15-alpine",
+   "pgbouncer": "PgBouncer 1.24.0",
+   "appImage": "oven/bun:1.3.14-alpine"
+  },
+  "host": {
+   "cpu": "Apple M4",
+   "cpus": 10,
+   "memGiB": 16,
+   "macos": "26.6.2"
+  },
+  "vm": {
+   "cpus": 6,
+   "memGiB": 2.91,
+   "os": "OrbStack",
+   "kernel": "7.0.14-orbstack-00380-ga7e0a2dc9535"
+  },
+  "otherContainers": [
+   "db-pgbouncer-1",
+   "db-postgres-1-1",
+   "db-postgres-0-1",
+   "supabase_db_ecommerce-api",
+   "supabase_studio_ecommerce-api",
+   "supabase_pg_meta_ecommerce-api",
+   "supabase_rest_ecommerce-api",
+   "supabase_auth_ecommerce-api",
+   "supabase_kong_ecommerce-api",
+   "portal-db"
+  ]
+ },
+ "settings": {
+  "tiers": [
+   "T3"
+  ],
+  "tenants": 100,
+  "rowsPerTenant": 10000,
+  "bigTenantStudents": 1000000,
+  "seconds": 15,
+  "samples": 2000,
+  "httpVus": 64,
+  "fixedRateRps": 200
+ },
+ "notes": [
+  "PgBouncer is limited to 0.5 CPU and the harness app to 2 CPU / 512 MB; k6 runs on the host. Both normal and package requests pass through the same app and PgBouncer."
+ ],
+ "management": {
+  "bootstrapMs": 329.29,
+  "provisionTenant": {
+   "n": 20,
+   "p50Ms": 202.13,
+   "p95Ms": 370.93,
+   "p99Ms": 451.89,
+   "maxMs": 451.89,
+   "note": "sequential; placement + schema + 4 tenant migrations (incl. CREATE INDEX CONCURRENTLY) + install seed + activation"
+  },
+  "provisionConcurrent": {
+   "tenants": 80,
+   "concurrency": 8,
+   "seconds": 7.25,
+   "tenantsPerSecond": 11
+  },
+  "provisionDemo": {
+   "n": 5,
+   "p50Ms": 306.33,
+   "p95Ms": 364.95,
+   "p99Ms": 364.95,
+   "maxMs": 364.95,
+   "note": "includes demo seeds (students + Better Auth login with password hash)"
+  },
+  "resetDemoMs": 380.64,
+  "seedTenantNoopMs": 46.76,
+  "migrateTenantNoopMs": 67.19,
+  "migrateAllNoop": {
+   "tenants": 106,
+   "ms": 34.38,
+   "xactDelta": {
+    "db0": 19,
+    "db1": 0
+   },
+   "note": "xact_commit delta includes the stats reads themselves"
+  },
+  "loadTenantRows": {
+   "tenants": 100,
+   "rows": 2000000,
+   "seconds": 46.83
+  },
+  "loadBigTenant": {
+   "students": 1000000,
+   "enrollments": 1000000,
+   "seconds": 41.33
+  },
+  "vacuumAnalyzeSeconds": 4.15,
+  "rollbackIndexBigMs": 91.43,
+  "migrateIndexBigMs": {
+   "ms": 1211.1,
+   "note": "CREATE INDEX CONCURRENTLY students(name) on 1,000,000 rows"
+  },
+  "sizesMiB": {
+   "db0": 160,
+   "db1": 406
+  }
+ },
+ "inProcess": {
+  "bun": {
+   "tenantFromHostUs": 0.2346,
+   "firstTouch": {
+    "n": 100,
+    "p50Ms": 1.9,
+    "p95Ms": 3.71,
+    "p99Ms": 15.76,
+    "maxMs": 33.69,
+    "note": "new process: placement read + tenant query"
+   },
+   "secondTouch": {
+    "n": 100,
+    "p50Ms": 1.1,
+    "p95Ms": 2.76,
+    "p99Ms": 3.07,
+    "maxMs": 4.11
+   },
+   "placementGet": {
+    "n": 2000,
+    "p50Ms": 0.56,
+    "p95Ms": 1.31,
+    "p99Ms": 3.04,
+    "maxMs": 15.77
+   },
+   "point": {
+    "normal": {
+     "n": 2000,
+     "p50Ms": 0.57,
+     "p95Ms": 1.45,
+     "p99Ms": 2.35,
+     "maxMs": 11.7
+    },
+    "package": {
+     "n": 2000,
+     "p50Ms": 1.12,
+     "p95Ms": 2.42,
+     "p99Ms": 3.45,
+     "maxMs": 13.37
+    }
+   },
+   "insertTransaction": {
+    "normal": {
+     "n": 500,
+     "p50Ms": 3.82,
+     "p95Ms": 6.3,
+     "p99Ms": 8.45,
+     "maxMs": 17.43
+    },
+    "package": {
+     "n": 500,
+     "p50Ms": 4.47,
+     "p95Ms": 7.12,
+     "p99Ms": 8.9,
+     "maxMs": 14.34
+    }
+   },
+   "listStudentsPage": {
+    "rows": 1000000,
+    "beforeFix": {
+     "n": 10,
+     "p50Ms": 291.18,
+     "p95Ms": 340.04,
+     "p99Ms": 340.04,
+     "maxMs": 340.04
+    },
+    "afterFix": {
+     "n": 200,
+     "p50Ms": 0.62,
+     "p95Ms": 1.42,
+     "p99Ms": 1.84,
+     "maxMs": 20.43
+    },
+    "note": "beforeFix: ORDER BY the text alias id (full scan + sort); afterFix: generated listStudents, ORDER BY students.id"
+   }
+  },
+  "postgres": {
+   "tenantFromHostUs": 0.1308,
+   "firstTouch": {
+    "n": 100,
+    "p50Ms": 1.05,
+    "p95Ms": 1.8,
+    "p99Ms": 4.41,
+    "maxMs": 13.11,
+    "note": "new process: placement read + tenant query"
+   },
+   "secondTouch": {
+    "n": 100,
+    "p50Ms": 0.95,
+    "p95Ms": 1.75,
+    "p99Ms": 1.99,
+    "maxMs": 2.18
+   },
+   "placementGet": {
+    "n": 2000,
+    "p50Ms": 0.42,
+    "p95Ms": 0.85,
+    "p99Ms": 1.13,
+    "maxMs": 1.67
+   },
+   "point": {
+    "normal": {
+     "n": 2000,
+     "p50Ms": 0.54,
+     "p95Ms": 1.14,
+     "p99Ms": 1.68,
+     "maxMs": 17.09
+    },
+    "package": {
+     "n": 2000,
+     "p50Ms": 1.04,
+     "p95Ms": 1.91,
+     "p99Ms": 3.05,
+     "maxMs": 41.17
+    }
+   },
+   "insertTransaction": {
+    "normal": {
+     "n": 500,
+     "p50Ms": 2.32,
+     "p95Ms": 3.62,
+     "p99Ms": 4.36,
+     "maxMs": 14.71
+    },
+    "package": {
+     "n": 500,
+     "p50Ms": 3,
+     "p95Ms": 4.72,
+     "p99Ms": 6.44,
+     "maxMs": 19.79
+    }
+   },
+   "listStudentsPage": {
+    "rows": 1000000,
+    "beforeFix": {
+     "n": 10,
+     "p50Ms": 293.43,
+     "p95Ms": 310.53,
+     "p99Ms": 310.53,
+     "maxMs": 310.53
+    },
+    "afterFix": {
+     "n": 200,
+     "p50Ms": 0.88,
+     "p95Ms": 1.49,
+     "p99Ms": 1.9,
+     "maxMs": 2.7
+    },
+    "note": "beforeFix: ORDER BY the text alias id (full scan + sort); afterFix: generated listStudents, ORDER BY students.id"
+   }
+  },
+  "pg": {
+   "tenantFromHostUs": 0.1365,
+   "firstTouch": {
+    "n": 100,
+    "p50Ms": 0.62,
+    "p95Ms": 1.29,
+    "p99Ms": 2.06,
+    "maxMs": 7.07,
+    "note": "new process: placement read + tenant query"
+   },
+   "secondTouch": {
+    "n": 100,
+    "p50Ms": 0.57,
+    "p95Ms": 1.1,
+    "p99Ms": 1.47,
+    "maxMs": 2
+   },
+   "placementGet": {
+    "n": 2000,
+    "p50Ms": 0.26,
+    "p95Ms": 0.59,
+    "p99Ms": 0.81,
+    "maxMs": 1.24
+   },
+   "point": {
+    "normal": {
+     "n": 2000,
+     "p50Ms": 0.3,
+     "p95Ms": 0.69,
+     "p99Ms": 1,
+     "maxMs": 3.65
+    },
+    "package": {
+     "n": 2000,
+     "p50Ms": 0.56,
+     "p95Ms": 1.08,
+     "p99Ms": 1.46,
+     "maxMs": 2.6
+    }
+   },
+   "insertTransaction": {
+    "normal": {
+     "n": 500,
+     "p50Ms": 1.76,
+     "p95Ms": 2.75,
+     "p99Ms": 3.42,
+     "maxMs": 9.67
+    },
+    "package": {
+     "n": 500,
+     "p50Ms": 2.14,
+     "p95Ms": 3.09,
+     "p99Ms": 3.99,
+     "maxMs": 6.92
+    }
+   },
+   "listStudentsPage": {
+    "rows": 1000000,
+    "beforeFix": {
+     "n": 10,
+     "p50Ms": 294.32,
+     "p95Ms": 305.15,
+     "p99Ms": 305.15,
+     "maxMs": 305.15
+    },
+    "afterFix": {
+     "n": 200,
+     "p50Ms": 0.69,
+     "p95Ms": 1.43,
+     "p99Ms": 2.68,
+     "maxMs": 5.53
+    },
+    "note": "beforeFix: ORDER BY the text alias id (full scan + sort); afterFix: generated listStudents, ORDER BY students.id"
+   }
+  }
+ },
+ "http": {
+  "T3": {
+   "bun": {
+    "health": {
+     "max": {
+      "rps": 18128.2,
+      "p50Ms": 0.47,
+      "p95Ms": 4.91,
+      "p99Ms": 7.15,
+      "errorRate": 0
+     },
+     "at200": {
+      "rps": 199.9,
+      "p50Ms": 0.94,
+      "p95Ms": 2.02,
+      "p99Ms": 2.77,
+      "errorRate": 0
+     },
+     "resources": {
+      "bench-pg": {
+       "cpuAvgPct": 1.3,
+       "cpuMaxPct": 12,
+       "memAvgMiB": 374.2,
+       "memMaxMiB": 374.6,
+       "n": 30
+      },
+      "bench-app": {
+       "cpuAvgPct": 38.8,
+       "cpuMaxPct": 53.5,
+       "memAvgMiB": 103,
+       "memMaxMiB": 153.6,
+       "n": 30
+      },
+      "bench-pgbouncer": {
+       "cpuAvgPct": 0.2,
+       "cpuMaxPct": 3,
+       "memAvgMiB": 1.3,
+       "memMaxMiB": 1.3,
+       "n": 30
+      }
+     }
+    },
+    "rawpoint": {
+     "max": {
+      "rps": 7489.8,
+      "p50Ms": 5.25,
+      "p95Ms": 36.78,
+      "p99Ms": 46.42,
+      "errorRate": 0
+     },
+     "at200": {
+      "rps": 199.9,
+      "p50Ms": 1.91,
+      "p95Ms": 4.33,
+      "p99Ms": 5.07,
+      "errorRate": 0
+     },
+     "resources": {
+      "bench-pg": {
+       "cpuAvgPct": 91.9,
+       "cpuMaxPct": 100.3,
+       "memAvgMiB": 376.3,
+       "memMaxMiB": 376.9,
+       "n": 30
+      },
+      "bench-app": {
+       "cpuAvgPct": 48.3,
+       "cpuMaxPct": 59,
+       "memAvgMiB": 103.6,
+       "memMaxMiB": 117.9,
+       "n": 30
+      },
+      "bench-pgbouncer": {
+       "cpuAvgPct": 19.2,
+       "cpuMaxPct": 23.1,
+       "memAvgMiB": 1.4,
+       "memMaxMiB": 1.5,
+       "n": 30
+      }
+     }
+    },
+    "point": {
+     "max": {
+      "rps": 4517.5,
+      "p50Ms": 10.12,
+      "p95Ms": 38.24,
+      "p99Ms": 47.26,
+      "errorRate": 0
+     },
+     "at200": {
+      "rps": 199.9,
+      "p50Ms": 1.98,
+      "p95Ms": 4.88,
+      "p99Ms": 6.09,
+      "errorRate": 0
+     },
+     "resources": {
+      "bench-pg": {
+       "cpuAvgPct": 94.4,
+       "cpuMaxPct": 99.7,
+       "memAvgMiB": 374.5,
+       "memMaxMiB": 376.9,
+       "n": 30
+      },
+      "bench-app": {
+       "cpuAvgPct": 56.6,
+       "cpuMaxPct": 70.5,
+       "memAvgMiB": 169.2,
+       "memMaxMiB": 174.8,
+       "n": 30
+      },
+      "bench-pgbouncer": {
+       "cpuAvgPct": 20.8,
+       "cpuMaxPct": 24.5,
+       "memAvgMiB": 1.3,
+       "memMaxMiB": 1.3,
+       "n": 30
+      }
+     }
+    },
+    "cachedpoint": {
+     "max": {
+      "rps": 6508.3,
+      "p50Ms": 6.88,
+      "p95Ms": 30.56,
+      "p99Ms": 40.76,
+      "errorRate": 0
+     },
+     "at200": {
+      "rps": 199.9,
+      "p50Ms": 2.01,
+      "p95Ms": 4.58,
+      "p99Ms": 5.86,
+      "errorRate": 0
+     },
+     "resources": {
+      "bench-pg": {
+       "cpuAvgPct": 92.2,
+       "cpuMaxPct": 99.8,
+       "memAvgMiB": 374.3,
+       "memMaxMiB": 374.5,
+       "n": 30
+      },
+      "bench-app": {
+       "cpuAvgPct": 58.4,
+       "cpuMaxPct": 70.3,
+       "memAvgMiB": 170.3,
+       "memMaxMiB": 171.8,
+       "n": 30
+      },
+      "bench-pgbouncer": {
+       "cpuAvgPct": 19.9,
+       "cpuMaxPct": 23.7,
+       "memAvgMiB": 1.3,
+       "memMaxMiB": 1.3,
+       "n": 30
+      }
+     }
+    },
+    "rawinsert": {
+     "max": {
+      "rps": 2660.2,
+      "p50Ms": 18.21,
+      "p95Ms": 55.77,
+      "p99Ms": 75.27,
+      "errorRate": 0
+     },
+     "at200": {
+      "rps": 199.9,
+      "p50Ms": 3.25,
+      "p95Ms": 5.81,
+      "p99Ms": 7.32,
+      "errorRate": 0
+     },
+     "resources": {
+      "bench-pg": {
+       "cpuAvgPct": 92.1,
+       "cpuMaxPct": 100.2,
+       "memAvgMiB": 386.1,
+       "memMaxMiB": 387.6,
+       "n": 30
+      },
+      "bench-app": {
+       "cpuAvgPct": 46.1,
+       "cpuMaxPct": 54,
+       "memAvgMiB": 146.7,
+       "memMaxMiB": 148,
+       "n": 30
+      },
+      "bench-pgbouncer": {
+       "cpuAvgPct": 23.2,
+       "cpuMaxPct": 27.9,
+       "memAvgMiB": 1.5,
+       "memMaxMiB": 1.5,
+       "n": 30
+      }
+     }
+    },
+    "insert": {
+     "max": {
+      "rps": 1935.8,
+      "p50Ms": 24.97,
+      "p95Ms": 66.96,
+      "p99Ms": 87.84,
+      "errorRate": 0
+     },
+     "at200": {
+      "rps": 199.9,
+      "p50Ms": 3.19,
+      "p95Ms": 5.88,
+      "p99Ms": 7.57,
+      "errorRate": 0
+     },
+     "resources": {
+      "bench-pg": {
+       "cpuAvgPct": 92.4,
+       "cpuMaxPct": 100.5,
+       "memAvgMiB": 387.6,
+       "memMaxMiB": 388.1,
+       "n": 31
+      },
+      "bench-app": {
+       "cpuAvgPct": 47.7,
+       "cpuMaxPct": 54.7,
+       "memAvgMiB": 143.6,
+       "memMaxMiB": 148.9,
+       "n": 31
+      },
+      "bench-pgbouncer": {
+       "cpuAvgPct": 21.4,
+       "cpuMaxPct": 24.1,
+       "memAvgMiB": 1.5,
+       "memMaxMiB": 1.5,
+       "n": 31
+      }
+     }
+    },
+    "appErrors": {}
+   },
+   "postgres": {
+    "health": {
+     "max": {
+      "rps": 16347.9,
+      "p50Ms": 1.58,
+      "p95Ms": 6.44,
+      "p99Ms": 9.33,
+      "errorRate": 0
+     },
+     "at200": {
+      "rps": 199.9,
+      "p50Ms": 0.9,
+      "p95Ms": 1.93,
+      "p99Ms": 2.87,
+      "errorRate": 0
+     },
+     "resources": {
+      "bench-pg": {
+       "cpuAvgPct": 1.2,
+       "cpuMaxPct": 11.2,
+       "memAvgMiB": 387.1,
+       "memMaxMiB": 387.4,
+       "n": 30
+      },
+      "bench-app": {
+       "cpuAvgPct": 46.9,
+       "cpuMaxPct": 53.3,
+       "memAvgMiB": 103,
+       "memMaxMiB": 103.5,
+       "n": 30
+      },
+      "bench-pgbouncer": {
+       "cpuAvgPct": 0.3,
+       "cpuMaxPct": 3.1,
+       "memAvgMiB": 1.5,
+       "memMaxMiB": 1.5,
+       "n": 30
+      }
+     }
+    },
+    "rawpoint": {
+     "max": {
+      "rps": 6587.3,
+      "p50Ms": 7.75,
+      "p95Ms": 23.83,
+      "p99Ms": 38.25,
+      "errorRate": 0
+     },
+     "at200": {
+      "rps": 199.9,
+      "p50Ms": 1.93,
+      "p95Ms": 5.25,
+      "p99Ms": 15.25,
+      "errorRate": 0
+     },
+     "resources": {
+      "bench-pg": {
+       "cpuAvgPct": 88.3,
+       "cpuMaxPct": 98.2,
+       "memAvgMiB": 387.2,
+       "memMaxMiB": 387.4,
+       "n": 31
+      },
+      "bench-app": {
+       "cpuAvgPct": 62.9,
+       "cpuMaxPct": 75.2,
+       "memAvgMiB": 106.8,
+       "memMaxMiB": 113.7,
+       "n": 31
+      },
+      "bench-pgbouncer": {
+       "cpuAvgPct": 23.5,
+       "cpuMaxPct": 26.7,
+       "memAvgMiB": 1.3,
+       "memMaxMiB": 1.3,
+       "n": 31
+      }
+     }
+    },
+    "point": {
+     "max": {
+      "rps": 4347.9,
+      "p50Ms": 11.98,
+      "p95Ms": 35.93,
+      "p99Ms": 46.83,
+      "errorRate": 0
+     },
+     "at200": {
+      "rps": 199.9,
+      "p50Ms": 1.95,
+      "p95Ms": 5.39,
+      "p99Ms": 53.45,
+      "errorRate": 0
+     },
+     "resources": {
+      "bench-pg": {
+       "cpuAvgPct": 91.1,
+       "cpuMaxPct": 99.3,
+       "memAvgMiB": 387.2,
+       "memMaxMiB": 387.5,
+       "n": 30
+      },
+      "bench-app": {
+       "cpuAvgPct": 60.8,
+       "cpuMaxPct": 72.8,
+       "memAvgMiB": 119.7,
+       "memMaxMiB": 152.6,
+       "n": 30
+      },
+      "bench-pgbouncer": {
+       "cpuAvgPct": 25.8,
+       "cpuMaxPct": 29.3,
+       "memAvgMiB": 1.3,
+       "memMaxMiB": 1.3,
+       "n": 30
+      }
+     }
+    },
+    "cachedpoint": {
+     "max": {
+      "rps": 5075.4,
+      "p50Ms": 10.65,
+      "p95Ms": 29.27,
+      "p99Ms": 43.95,
+      "errorRate": 0
+     },
+     "at200": {
+      "rps": 199.9,
+      "p50Ms": 1.91,
+      "p95Ms": 4.99,
+      "p99Ms": 7.69,
+      "errorRate": 0
+     },
+     "resources": {
+      "bench-pg": {
+       "cpuAvgPct": 87.8,
+       "cpuMaxPct": 98.8,
+       "memAvgMiB": 386.9,
+       "memMaxMiB": 387.2,
+       "n": 30
+      },
+      "bench-app": {
+       "cpuAvgPct": 67.7,
+       "cpuMaxPct": 77.9,
+       "memAvgMiB": 154.3,
+       "memMaxMiB": 155.3,
+       "n": 30
+      },
+      "bench-pgbouncer": {
+       "cpuAvgPct": 24.1,
+       "cpuMaxPct": 27.6,
+       "memAvgMiB": 1.3,
+       "memMaxMiB": 1.3,
+       "n": 30
+      }
+     }
+    },
+    "rawinsert": {
+     "max": {
+      "rps": 2003.3,
+      "p50Ms": 22.23,
+      "p95Ms": 80.77,
+      "p99Ms": 167.73,
+      "errorRate": 0
+     },
+     "at200": {
+      "rps": 199.9,
+      "p50Ms": 3.15,
+      "p95Ms": 6.19,
+      "p99Ms": 8.31,
+      "errorRate": 0
+     },
+     "resources": {
+      "bench-pg": {
+       "cpuAvgPct": 90,
+       "cpuMaxPct": 99,
+       "memAvgMiB": 387.9,
+       "memMaxMiB": 388.8,
+       "n": 30
+      },
+      "bench-app": {
+       "cpuAvgPct": 63.4,
+       "cpuMaxPct": 85.5,
+       "memAvgMiB": 141.3,
+       "memMaxMiB": 157.8,
+       "n": 30
+      },
+      "bench-pgbouncer": {
+       "cpuAvgPct": 25.7,
+       "cpuMaxPct": 30.6,
+       "memAvgMiB": 1.3,
+       "memMaxMiB": 1.3,
+       "n": 30
+      }
+     }
+    },
+    "insert": {
+     "max": {
+      "rps": 1412.5,
+      "p50Ms": 36.55,
+      "p95Ms": 98,
+      "p99Ms": 143.55,
+      "errorRate": 0
+     },
+     "at200": {
+      "rps": 199.9,
+      "p50Ms": 3.32,
+      "p95Ms": 6.16,
+      "p99Ms": 9.42,
+      "errorRate": 0
+     },
+     "resources": {
+      "bench-pg": {
+       "cpuAvgPct": 90.4,
+       "cpuMaxPct": 100.9,
+       "memAvgMiB": 388.1,
+       "memMaxMiB": 391.7,
+       "n": 30
+      },
+      "bench-app": {
+       "cpuAvgPct": 51.9,
+       "cpuMaxPct": 60.5,
+       "memAvgMiB": 121.4,
+       "memMaxMiB": 123.6,
+       "n": 30
+      },
+      "bench-pgbouncer": {
+       "cpuAvgPct": 23.1,
+       "cpuMaxPct": 28.2,
+       "memAvgMiB": 1.3,
+       "memMaxMiB": 1.3,
+       "n": 30
+      }
+     }
+    },
+    "appErrors": {}
+   },
+   "pg": {
+    "health": {
+     "max": {
+      "rps": 16963.1,
+      "p50Ms": 1.66,
+      "p95Ms": 5.77,
+      "p99Ms": 8.14,
+      "errorRate": 0
+     },
+     "at200": {
+      "rps": 199.9,
+      "p50Ms": 0.93,
+      "p95Ms": 2,
+      "p99Ms": 2.78,
+      "errorRate": 0
+     },
+     "resources": {
+      "bench-pg": {
+       "cpuAvgPct": 0.6,
+       "cpuMaxPct": 6.2,
+       "memAvgMiB": 390.3,
+       "memMaxMiB": 390.5,
+       "n": 30
+      },
+      "bench-app": {
+       "cpuAvgPct": 46.5,
+       "cpuMaxPct": 53.3,
+       "memAvgMiB": 111.8,
+       "memMaxMiB": 112.7,
+       "n": 30
+      },
+      "bench-pgbouncer": {
+       "cpuAvgPct": 0.1,
+       "cpuMaxPct": 1.5,
+       "memAvgMiB": 1.3,
+       "memMaxMiB": 1.3,
+       "n": 30
+      }
+     }
+    },
+    "rawpoint": {
+     "max": {
+      "rps": 7707.3,
+      "p50Ms": 5.31,
+      "p95Ms": 33.6,
+      "p99Ms": 44.37,
+      "errorRate": 0
+     },
+     "at200": {
+      "rps": 199.9,
+      "p50Ms": 2.09,
+      "p95Ms": 4.44,
+      "p99Ms": 5.69,
+      "errorRate": 0
+     },
+     "resources": {
+      "bench-pg": {
+       "cpuAvgPct": 91.9,
+       "cpuMaxPct": 100.4,
+       "memAvgMiB": 389.2,
+       "memMaxMiB": 391.6,
+       "n": 30
+      },
+      "bench-app": {
+       "cpuAvgPct": 53.9,
+       "cpuMaxPct": 68.9,
+       "memAvgMiB": 113.7,
+       "memMaxMiB": 134,
+       "n": 30
+      },
+      "bench-pgbouncer": {
+       "cpuAvgPct": 16.7,
+       "cpuMaxPct": 20.5,
+       "memAvgMiB": 1.3,
+       "memMaxMiB": 1.3,
+       "n": 30
+      }
+     }
+    },
+    "point": {
+     "max": {
+      "rps": 4622.9,
+      "p50Ms": 10.36,
+      "p95Ms": 38.15,
+      "p99Ms": 47.57,
+      "errorRate": 0
+     },
+     "at200": {
+      "rps": 199.9,
+      "p50Ms": 2.02,
+      "p95Ms": 4.74,
+      "p99Ms": 6.33,
+      "errorRate": 0
+     },
+     "resources": {
+      "bench-pg": {
+       "cpuAvgPct": 92.2,
+       "cpuMaxPct": 101.3,
+       "memAvgMiB": 387.4,
+       "memMaxMiB": 387.7,
+       "n": 30
+      },
+      "bench-app": {
+       "cpuAvgPct": 56.8,
+       "cpuMaxPct": 67.8,
+       "memAvgMiB": 113.7,
+       "memMaxMiB": 117.1,
+       "n": 30
+      },
+      "bench-pgbouncer": {
+       "cpuAvgPct": 17,
+       "cpuMaxPct": 20.1,
+       "memAvgMiB": 1.3,
+       "memMaxMiB": 1.3,
+       "n": 30
+      }
+     }
+    },
+    "cachedpoint": {
+     "max": {
+      "rps": 6164.7,
+      "p50Ms": 7.74,
+      "p95Ms": 30.71,
+      "p99Ms": 40.27,
+      "errorRate": 0
+     },
+     "at200": {
+      "rps": 199.9,
+      "p50Ms": 2,
+      "p95Ms": 4.66,
+      "p99Ms": 5.57,
+      "errorRate": 0
+     },
+     "resources": {
+      "bench-pg": {
+       "cpuAvgPct": 92.5,
+       "cpuMaxPct": 99.9,
+       "memAvgMiB": 388.2,
+       "memMaxMiB": 388.5,
+       "n": 30
+      },
+      "bench-app": {
+       "cpuAvgPct": 62.1,
+       "cpuMaxPct": 75,
+       "memAvgMiB": 138.1,
+       "memMaxMiB": 144,
+       "n": 30
+      },
+      "bench-pgbouncer": {
+       "cpuAvgPct": 17.1,
+       "cpuMaxPct": 20.4,
+       "memAvgMiB": 1.3,
+       "memMaxMiB": 1.3,
+       "n": 30
+      }
+     }
+    },
+    "rawinsert": {
+     "max": {
+      "rps": 2636.3,
+      "p50Ms": 17.34,
+      "p95Ms": 58.93,
+      "p99Ms": 83.88,
+      "errorRate": 0
+     },
+     "at200": {
+      "rps": 199.9,
+      "p50Ms": 3.17,
+      "p95Ms": 5.94,
+      "p99Ms": 8.32,
+      "errorRate": 0
+     },
+     "resources": {
+      "bench-pg": {
+       "cpuAvgPct": 92.4,
+       "cpuMaxPct": 100.3,
+       "memAvgMiB": 390,
+       "memMaxMiB": 390.3,
+       "n": 30
+      },
+      "bench-app": {
+       "cpuAvgPct": 45.9,
+       "cpuMaxPct": 60.3,
+       "memAvgMiB": 143.9,
+       "memMaxMiB": 145.2,
+       "n": 30
+      },
+      "bench-pgbouncer": {
+       "cpuAvgPct": 20,
+       "cpuMaxPct": 22.6,
+       "memAvgMiB": 1.3,
+       "memMaxMiB": 1.3,
+       "n": 30
+      }
+     }
+    },
+    "insert": {
+     "max": {
+      "rps": 1864.9,
+      "p50Ms": 26.16,
+      "p95Ms": 70,
+      "p99Ms": 86.69,
+      "errorRate": 0
+     },
+     "at200": {
+      "rps": 199.9,
+      "p50Ms": 3.28,
+      "p95Ms": 6.14,
+      "p99Ms": 9.24,
+      "errorRate": 0
+     },
+     "resources": {
+      "bench-pg": {
+       "cpuAvgPct": 93,
+       "cpuMaxPct": 101.3,
+       "memAvgMiB": 388.4,
+       "memMaxMiB": 388.7,
+       "n": 30
+      },
+      "bench-app": {
+       "cpuAvgPct": 48.5,
+       "cpuMaxPct": 56.5,
+       "memAvgMiB": 130.6,
+       "memMaxMiB": 131,
+       "n": 30
+      },
+      "bench-pgbouncer": {
+       "cpuAvgPct": 18.3,
+       "cpuMaxPct": 21,
+       "memAvgMiB": 1.3,
+       "memMaxMiB": 1.3,
+       "n": 30
+      }
+     }
+    },
+    "appErrors": {}
+   }
+  }
+ },
+ "updatedAt": "2026-09-15T09:39:54.523Z"
+}
