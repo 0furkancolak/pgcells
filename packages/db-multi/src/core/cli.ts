@@ -46,6 +46,11 @@ export type CliOptions = MigrationRunOptions & {
   safetyPoint?: string;
   org?: string;
   check?: string;
+  appRegion?: string;
+  region?: string;
+  zone?: string;
+  label?: string[];
+  unlabel?: string[];
   appInstances?: number;
   poolMax?: number;
   poolers?: number;
@@ -72,6 +77,7 @@ type Switches = {
   full?: boolean;
   fromReplica?: boolean;
   noTls?: boolean;
+  allowCrossRegion?: boolean;
 };
 type Options = CliOptions & Switches;
 interface Command {
@@ -89,7 +95,7 @@ interface Command {
 const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
 const usage = (message: string) => new AppError("USAGE", message);
 const MIGRATION_FLAGS = ["--dry-run", "--db", "--concurrency", "--per-db-concurrency", "--continue-on-error"];
-const BOOLEAN_FLAGS = ["--dry-run", "--demo", "--ts", "--continue-on-error", "--writers-drained", "--from-url", "--pgbouncer-url", "--pooled-urls", "--full", "--from-replica", "--no-tls"];
+const BOOLEAN_FLAGS = ["--dry-run", "--demo", "--ts", "--continue-on-error", "--writers-drained", "--from-url", "--pgbouncer-url", "--pooled-urls", "--full", "--from-replica", "--no-tls", "--allow-cross-region"];
 /** URLs that carry a password are not put in argv (readable via `ps`); they are asked for with hidden input: [ask-secret.ts](tools/ask-secret.ts). */
 const SOURCE_URL_QUESTION = "Source DB URL (postgres://…, input is hidden): ";
 const PGBOUNCER_URL_QUESTION = "PgBouncer console URL (postgres://…/pgbouncer, input is hidden): ";
@@ -133,7 +139,7 @@ const askNeonApi = async () => {
   return neonApi(await askSecret(NEON_KEY_QUESTION));
 };
 /** Repeatable options: the values (which may also be comma-separated) accumulate in a list. */
-const REPEATABLE_FLAGS = ["--exclude", "--schema"];
+const REPEATABLE_FLAGS = ["--exclude", "--schema", "--label", "--unlabel"];
 /** Numeric options → upper limit. */
 const INTEGER_FLAGS: Record<string, number> = {
   "--concurrency": MIGRATION_MAX.concurrency,
@@ -172,6 +178,17 @@ const HELP_FLAGS = ["--help", "-h"];
 const DRIVER_FLAG = "--driver=";
 const commaList = (value: string) => value.split(",").map((id) => id.trim()).filter(Boolean);
 const optionalCommaList = (value: string | undefined) => (value === undefined ? undefined : commaList(value));
+/** `--label tier=dedicated,env=prod` (repeatable) → `{ tier: "dedicated", env: "prod" }`. */
+function labelMap(entries: readonly string[] | undefined): Record<string, string> | undefined {
+  if (!entries) return undefined;
+  return Object.fromEntries(
+    entries.map((entry) => {
+      const at = entry.indexOf("=");
+      if (at < 1 || at === entry.length - 1) throw usage("--label needs key=value (e.g. --label tier=dedicated)");
+      return [entry.slice(0, at), entry.slice(at + 1)];
+    }),
+  );
+}
 /** Only the selected driver is loaded; since the CLI runs on Bun, the default is Bun SQL. */
 const drivers: Record<string, () => Promise<Driver>> = {
   bun: () => import("./drivers/bun").then((m) => m.bunDriver),
@@ -242,11 +259,12 @@ const commands: Record<string, Command> = {
     run: ({ app }, tenant) => app.platform.get(tenant),
   },
   provision: {
-    usage: "<tenant> [dbN] [--size 1-100] [--demo] [--tenant JSON]",
-    summary: "Creates a tenant; if no DB is given, the least loaded DB for the size (example: abc --size 20 --tenant '{\"name\":\"Abc\"}')",
-    flags: ["--demo", "--size", "--tenant"],
+    usage: "<tenant> [dbN] [--size 1-100] [--demo] [--tenant JSON] [--region R] [--zone Z] [--label k=v]",
+    summary:
+      "Creates a tenant; if no DB is given, the least loaded DB for the size (example: abc --size 20 --tenant '{\"name\":\"Abc\"}'). --region/--zone/--label narrow the choice to matching databases; --zone also binds the tenant to that residency zone",
+    flags: ["--demo", "--size", "--tenant", "--region", "--zone", "--label"],
     cancellable: true,
-    run: ({ api, app, options }, tenant, databaseId) => api.provisionTenant(app, tenant, databaseId || undefined, options),
+    run: ({ api, app, options }, tenant, databaseId) => api.provisionTenant(app, tenant, databaseId || undefined, { ...options, labels: labelMap(options.label) }),
   },
   reserve: {
     usage: "<ids> [--reason text]",
@@ -278,11 +296,21 @@ const commands: Record<string, Command> = {
       return result;
     },
   },
+  "replica set": {
+    usage: "<dbN#K> --region R",
+    summary: "Says where a read replica lives (db1#2: the second replica of db1 in DATABASE_REPLICA_URLS; \"none\" removes the row, so it is taken to live in its database's region)",
+    flags: ["--region"],
+    run: async ({ app, options }, address) => {
+      if (!options.region) throw usage("replica set needs --region R");
+      return (await import("./tools/replicas")).setReplicaRegion(app, address, options.region);
+    },
+  },
   "database set": {
-    usage: "<dbN> [--status active|draining] [--capacity N]",
-    summary: "Placement: a draining DB takes no new tenants",
-    flags: ["--status", "--capacity"],
-    run: async ({ app, options }, databaseId) => (await tenancy()).setDatabase(app, databaseId, options),
+    usage: "<dbN> [--status active|draining] [--capacity N] [--region R] [--zone Z] [--label k=v] [--unlabel key]",
+    summary:
+      "Placement: a draining DB takes no new tenants; --region/--zone (\"none\" clears) say where it lives and which residency zone it belongs to, --label/--unlabel manage its labels (a database labelled dedicated=true is skipped by automatic choice)",
+    flags: ["--status", "--capacity", "--region", "--zone", "--label", "--unlabel"],
+    run: async ({ app, options }, databaseId) => (await tenancy()).setDatabase(app, databaseId, { ...options, labels: labelMap(options.label), unlabel: options.unlabel }),
   },
   backup: {
     usage: "<dir> [--full] [--tenants a,b] [--concurrency N] [--from-replica]",
@@ -314,12 +342,12 @@ const commands: Record<string, Command> = {
       (await backup()).exportTenant(app, tenant, dir, { ...options, replicaUrls: options.fromReplica ? await askReplicaUrls() : undefined }),
   },
   restore: {
-    usage: "<tenant> <dir> [dbN] [--set ID] [--size 1-100]",
-    summary: "Restores a missing tenant from a backup (root or export directory)",
-    flags: ["--set", "--size"],
+    usage: "<tenant> <dir> [dbN] [--set ID] [--size 1-100] [--region R] [--zone Z] [--label k=v]",
+    summary: "Restores a missing tenant from a backup (root or export directory); --region/--zone/--label narrow the target database, --zone binds the tenant to that residency zone",
+    flags: ["--set", "--size", "--region", "--zone", "--label"],
     cancellable: true,
     run: async ({ app, options }, tenant, dir, databaseId) =>
-      (await backup()).restoreTenant(app, tenant, dir, { ...options, databaseId: databaseId || undefined }),
+      (await backup()).restoreTenant(app, tenant, dir, { ...options, databaseId: databaseId || undefined, labels: labelMap(options.label) }),
   },
   "neon stage-copy": {
     usage: "[--org ID]",
@@ -594,10 +622,10 @@ const commands: Record<string, Command> = {
     },
   },
   doctor: {
-    usage: "[--pgbouncer-url] [--pooled-urls] [--instances N --pool-max N --poolers N]",
+    usage: "[--pgbouncer-url] [--pooled-urls] [--app-region R] [--instances N --pool-max N --poolers N]",
     summary:
       "Checks the connection, DB identity, timeouts and platform state read-only (--pgbouncer-url: asks for the console URL, --pooled-urls: asks for the runtime URLs, with hidden input; with --pgbouncer-url, --instances/--pool-max/--poolers also check the connection budget against the pooler's and PostgreSQL's real limits, optionally --replicas N --db-users N --rps N --latency-ms N)",
-    flags: ["--pgbouncer-url", "--pooled-urls", "--instances", "--pool-max", "--poolers", "--replicas", "--db-users", "--rps", "--latency-ms"],
+    flags: ["--pgbouncer-url", "--pooled-urls", "--app-region", "--instances", "--pool-max", "--poolers", "--replicas", "--db-users", "--rps", "--latency-ms"],
     run: async ({ app, options }) => {
       const shape = (["appInstances", "poolMax", "poolers"] as const).map((key) => options[key]);
       const wantsBudget = [...shape, options.replicasPerNode, options.distinctDbUsers, options.rps, options.latencyMs].some((value) => value !== undefined);
@@ -616,17 +644,17 @@ const commands: Record<string, Command> = {
             latencyMs: options.latencyMs,
           }
         : undefined;
-      const result = await (await import("./tools/doctor")).doctor(app, { pgbouncerUrl, pooledUrls, budget });
+      const result = await (await import("./tools/doctor")).doctor(app, { pgbouncerUrl, pooledUrls, budget, appRegion: options.appRegion });
       if (!result.ok) process.exitCode = 1;
       return result;
     },
   },
   move: {
-    usage: "<tenant> <databaseId> --writers-drained",
-    summary: "Moves a tenant (example: abc db1)",
-    flags: ["--writers-drained"],
+    usage: "<tenant> <databaseId> --writers-drained [--allow-cross-region]",
+    summary: "Moves a tenant (example: abc db1); a move to a database in another region needs --allow-cross-region, and never leaves the tenant's residency zone",
+    flags: ["--writers-drained", "--allow-cross-region"],
     run: async ({ app, options }, tenant, databaseId) =>
-      (await move()).startMove(app, tenant, databaseId, options.writersDrained, (started) => print({ moveId: started.id })),
+      (await move()).startMove(app, tenant, databaseId, options.writersDrained, (started) => print({ moveId: started.id }), { allowCrossRegion: options.allowCrossRegion }),
   },
   "move-status": {
     usage: "<moveId>",

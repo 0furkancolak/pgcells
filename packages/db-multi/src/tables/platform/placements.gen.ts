@@ -11,6 +11,7 @@ export const placementRow = z.object({
   placementVersion: z.number().int(),
   moveOperationId: z.uuid().nullable(),
   size: z.number().int(),
+  residencyZone: z.string().nullable(),
 });
 export const placementInsert = z.object({
   tenantId: z.string(),
@@ -22,6 +23,7 @@ export const placementInsert = z.object({
   placementVersion: z.number().int().optional(),
   moveOperationId: z.uuid().nullable().optional(),
   size: z.number().int().optional(),
+  residencyZone: z.string().nullable().optional(),
 });
 export const placementColumns = {
   tenantId: "tenant_id",
@@ -33,6 +35,7 @@ export const placementColumns = {
   placementVersion: "placement_version",
   moveOperationId: "move_operation_id",
   size: "size",
+  residencyZone: "residency_zone",
 } as const;
 export type PlacementRow = z.infer<typeof placementRow>;
 export type PlacementInsert = z.infer<typeof placementInsert>;

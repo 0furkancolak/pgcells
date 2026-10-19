@@ -6,7 +6,9 @@ import { AppError, parseDatabaseValue } from "../errors";
 import {
   candidateColumns, readTenantColumns, resolveTenantFields, restoredTenantRow, type TenantColumns, tenantInsert, tenantInsertError, type TenantRow,
 } from "./fields";
-import { type Kind, type Placement, placementColumns, placementSchema, type Status, tenantSchema, validateTenantId } from "./model";
+import {
+  type Kind, type Placement, placementColumns, type PlacementRequest, placementSchema, type Status, tenantSchema, validateLabels, validateRegionName, validateTenantId,
+} from "./model";
 
 export function createPlatform(pools: Pick<Pools, "platform" | "nodeConfig">) {
   /** Fixed SQL text and bound values; rows are validated as stored state. `from`: the primary by default, or a read replica of it. */
@@ -37,10 +39,14 @@ export function createPlatform(pools: Pick<Pools, "platform" | "nodeConfig">) {
 /** Upper bound of a tenant's size (capacity unit). */
 const MAX_TENANT_SIZE = 100;
 
-/** Among `active` databases, the one with the lowest (sum of sizes + new size) / capacity ratio that fits; if `$3` is given, only that database. */
-const CHOOSE_DATABASE = `SELECT n.database_id FROM platform.nodes n LEFT JOIN platform.placements p ON p.database_id=n.database_id
+/** Among `active` databases that match the request, the one with the lowest (sum of sizes + new size) / capacity ratio that fits. `$3`: only that database; `$4`/`$5`:
+ * the node's region / residency zone; `$6`: labels the node must carry. A node labelled `dedicated=true` is skipped by automatic choice unless the request asks for that label
+ * or names the database. */
+const CHOOSE_DATABASE = `SELECT n.database_id AS "databaseId",n.residency_zone AS zone FROM platform.nodes n LEFT JOIN platform.placements p ON p.database_id=n.database_id
   WHERE n.status='active' AND n.database_id IN (SELECT pg_catalog.jsonb_array_elements_text($1::text::jsonb)) AND ($3::text IS NULL OR n.database_id=$3)
-  GROUP BY n.database_id,n.capacity HAVING COALESCE(sum(p.size),0)+$2<=n.capacity
+    AND ($4::text IS NULL OR n.region=$4) AND ($5::text IS NULL OR n.residency_zone=$5) AND n.labels @> $6::text::jsonb
+    AND ($3::text IS NOT NULL OR COALESCE(n.labels->>'dedicated','false')<>'true' OR COALESCE($6::text::jsonb->>'dedicated','false')='true')
+  GROUP BY n.database_id,n.capacity,n.residency_zone HAVING COALESCE(sum(p.size),0)+$2<=n.capacity
   ORDER BY (COALESCE(sum(p.size),0)+$2)::float8/n.capacity,length(n.database_id),n.database_id LIMIT 1`;
 
 /** Compare-and-set: writes only to the placement version read under the tenant lock. A status change never overwrites a move's
@@ -54,11 +60,29 @@ async function assertNotReserved(db: Pick<Connection, "query">, tenantId: string
   if (reserved.length) throw new AppError("TENANT_RESERVED", "tenant id is reserved");
 }
 
-/** The target database via `CHOOSE_DATABASE`; `NO_CAPACITY` if there is no room. */
-async function selectDatabase(db: Pick<Connection, "query">, databaseIds: readonly string[], weight: number, databaseId: string | undefined) {
-  const [target] = await db.query<{ database_id: string }>(CHOOSE_DATABASE, [JSON.stringify(databaseIds), weight, databaseId ?? null]);
-  if (!target) throw new AppError("NO_CAPACITY", `No active database has room for a tenant of size ${weight}`);
-  return target.database_id;
+/** Validated request values for the SQL: nulls where nothing is asked. */
+function requestValues(request: PlacementRequest) {
+  return {
+    region: request.region === undefined ? null : validateRegionName(request.region),
+    zone: request.zone === undefined ? null : validateRegionName(request.zone, "zone"),
+    labels: JSON.stringify(validateLabels(request.labels ?? {})),
+  };
+}
+
+/** The target database via `CHOOSE_DATABASE` and the residency zone the placement will carry (the requested one, else the node's); `NO_CAPACITY` if nothing matches
+ * or fits, `RESIDENCY_VIOLATION` if the named database is outside the requested zone. */
+async function selectDatabase(db: Pick<Connection, "query">, databaseIds: readonly string[], weight: number, databaseId: string | undefined, request: PlacementRequest) {
+  const wanted = requestValues(request);
+  if (databaseId !== undefined && wanted.zone !== null) {
+    const [node] = await db.query<{ zone: string | null }>("SELECT residency_zone AS zone FROM platform.nodes WHERE database_id=$1", [databaseId]);
+    if (node && node.zone !== wanted.zone) throw new AppError("RESIDENCY_VIOLATION", `Database ${databaseId} is not in residency zone ${wanted.zone}`);
+  }
+  const [target] = await db.query<{ databaseId: string; zone: string | null }>(CHOOSE_DATABASE, [JSON.stringify(databaseIds), weight, databaseId ?? null, wanted.region, wanted.zone, wanted.labels]);
+  if (!target) {
+    const asked = [wanted.region && `region ${wanted.region}`, wanted.zone && `zone ${wanted.zone}`, wanted.labels !== "{}" && `labels ${wanted.labels}`].filter(Boolean).join(", ");
+    throw new AppError("NO_CAPACITY", `No active database${asked ? ` matching ${asked}` : ""} has room for a tenant of size ${weight}`);
+  }
+  return { databaseId: target.databaseId, zone: wanted.zone ?? target.zone };
 }
 
 /** The `platform.tenants` columns are cached per management context; if a looked-up name is not in the cache they are re-read once (an application migration may
@@ -122,7 +146,14 @@ export function createManagementPlatform(
    * room (`NO_CAPACITY`). A transaction advisory lock serializes placement choices. `tenant`: application fields validated with `tenantFields` (or
    * `restoredTenant`); written only to a new `platform.tenants` row, in the same statement.
    */
-  async function create(tenantId: string, databaseId: string | undefined, kind: Kind = "tenant", size = 1, tenant: TenantRow = {}): Promise<Placement> {
+  async function create(
+    tenantId: string,
+    databaseId: string | undefined,
+    kind: Kind = "tenant",
+    size = 1,
+    tenant: TenantRow = {},
+    request: PlacementRequest = {},
+  ): Promise<Placement> {
     const schema = tenantSchema(tenantId, kind);
     const weight = placementWeight(databaseId, size);
     return pools.platform.transaction(async (tx) => {
@@ -130,12 +161,16 @@ export function createManagementPlatform(
       const [existingRow] = await tx.query(`SELECT ${placementColumns} FROM platform.placements p WHERE p.tenant_id=$1 FOR UPDATE`, [tenantId]);
       if (existingRow) {
         const existing = parseDatabaseValue(placementSchema, existingRow);
-        if ((databaseId !== undefined && existing.databaseId !== databaseId) || existing.kind !== kind)
+        if (
+          (databaseId !== undefined && existing.databaseId !== databaseId) ||
+          existing.kind !== kind ||
+          (request.zone !== undefined && (existing.residencyZone ?? null) !== request.zone)
+        )
           throw new AppError("TENANT_CONFLICT", "tenant exists with different placement intent");
         return existing;
       }
       await assertNotReserved(tx, tenantId);
-      const targetDatabaseId = await selectDatabase(tx, databaseIds, weight, databaseId);
+      const target = await selectDatabase(tx, databaseIds, weight, databaseId, request);
       // A record without a placement (e.g. a deleted tenant that was added without a placement) holds the ID.
       const insert = tenantInsert(tenantId, tenant);
       const inserted = await tx.query(insert.sql, insert.values).catch((error: unknown) => {
@@ -143,18 +178,18 @@ export function createManagementPlatform(
       });
       if (!inserted.length) throw new AppError("TENANT_EXISTS", "tenant id belongs to a tenant record without a placement");
       const [created] = await tx.query(
-        `INSERT INTO platform.placements AS p (tenant_id,database_id,kind,schema_name,status,size) VALUES ($1,$2,$3,$4,'provisioning',$5) RETURNING ${placementColumns}`,
-        [tenantId, targetDatabaseId, kind, schema, weight],
+        `INSERT INTO platform.placements AS p (tenant_id,database_id,kind,schema_name,status,size,residency_zone) VALUES ($1,$2,$3,$4,'provisioning',$5,$6) RETURNING ${placementColumns}`,
+        [tenantId, target.databaseId, kind, schema, weight, target.zone],
       );
       return parseDatabaseValue(placementSchema, created);
     });
   }
 
   /** Placement selection without writing (`create` repeats the same query under the lock); a reserved ID is `TENANT_RESERVED`, `NO_CAPACITY` if there is no room. */
-  async function choose(tenantId: string, databaseId: string | undefined, size = 1): Promise<string> {
+  async function choose(tenantId: string, databaseId: string | undefined, size = 1, request: PlacementRequest = {}): Promise<string> {
     const weight = placementWeight(databaseId, size);
     await assertNotReserved(pools.platform, tenantId);
-    return selectDatabase(pools.platform, databaseIds, weight, databaseId);
+    return (await selectDatabase(pools.platform, databaseIds, weight, databaseId, request)).databaseId;
   }
 
   /** CAS write; if no row is returned, the placement changed in the meantime (`PLACEMENT_CONFLICT`). */

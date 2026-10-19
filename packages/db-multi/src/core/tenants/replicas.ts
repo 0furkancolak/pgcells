@@ -28,6 +28,37 @@ export async function probeReplica(primary: Connection, replica: Connection): Pr
   return { inRecovery: row.in_recovery === true, lagMs };
 }
 
+/** Where each replica lives: database id → one entry per replica in config order; `region: null` means unknown (its node has no region). */
+export type ReplicaRegions = Record<string, readonly { region: string | null }[]>;
+
+/** Reads the regions of the configured replicas from the directory: the `platform.replicas` row when there is one, else the replica's node region. Cached for `ttlMs`
+ * (concurrent callers share one read); a failed read is not cached. `replicaCounts`: database id → number of configured replicas. */
+export function createReplicaRegionLoader(platform: Pick<Connection, "query">, replicaCounts: Readonly<Record<string, number>>, ttlMs: number, now: () => number = () => performance.now()) {
+  let cached: { at: number; value: Promise<ReplicaRegions> } | undefined;
+  const read = async (): Promise<ReplicaRegions> => {
+    const rows = await platform.query<{ databaseId: string; nodeRegion: string | null; ordinal: number | null; region: string | null }>(
+      `SELECT n.database_id AS "databaseId",n.region AS "nodeRegion",r.ordinal,r.region FROM platform.nodes n LEFT JOIN platform.replicas r ON r.database_id=n.database_id`,
+    );
+    const result: Record<string, { region: string | null }[]> = {};
+    for (const [databaseId, count] of Object.entries(replicaCounts)) {
+      const mine = rows.filter((row) => row.databaseId === databaseId);
+      const nodeRegion = mine[0]?.nodeRegion ?? null;
+      result[databaseId] = Array.from({ length: count }, (_, index) => ({ region: mine.find((row) => Number(row.ordinal) === index + 1)?.region ?? nodeRegion }));
+    }
+    return result;
+  };
+  return () => {
+    if (cached && now() - cached.at < ttlMs) return cached.value;
+    const value = read();
+    const entry = { at: now(), value };
+    cached = entry;
+    value.catch(() => {
+      if (cached === entry) cached = undefined;
+    });
+    return value;
+  };
+}
+
 export interface ReplicaRouterOptions {
   pools: Pick<Pools, "node" | "replicas" | "nodeConfig">;
   maxLagMs: number;
@@ -35,9 +66,12 @@ export interface ReplicaRouterOptions {
   cache?: StatusCache;
   rotation?: Map<string, number>;
   now?: () => number;
+  /** The application's region. When set, only replicas in that region (or of unknown region) are picked; `regions` says where they are. */
+  region?: string;
+  regions?: () => Promise<ReplicaRegions>;
 }
 
-export function createReplicaRouter({ pools, maxLagMs, statusMs, cache = sharedCache, rotation = sharedRotation, now = () => performance.now() }: ReplicaRouterOptions) {
+export function createReplicaRouter({ pools, maxLagMs, statusMs, cache = sharedCache, rotation = sharedRotation, now = () => performance.now(), region, regions }: ReplicaRouterOptions) {
   const inflight = new Map<string, Promise<ReplicaStatus>>();
   const usable = (status: ReplicaStatus) => status.up && status.lagMs !== null && status.lagMs <= maxLagMs;
   const down = (error?: string): ReplicaStatus => ({ up: false, inRecovery: false, lagMs: null, at: now(), ...(error ? { error } : {}) });
@@ -72,7 +106,15 @@ export function createReplicaRouter({ pools, maxLagMs, statusMs, cache = sharedC
     if (!urls.length) return undefined;
     const states = urls.map((url, index) => current(databaseId, index, url));
     const statuses = states.some((state) => state instanceof Promise) ? await Promise.all(states) : (states as ReplicaStatus[]);
-    const candidates = statuses.flatMap((status, index) => (usable(status) ? [index] : []));
+    let candidates = statuses.flatMap((status, index) => (usable(status) ? [index] : []));
+    // A regional application never reads from another region's replica: if its own region has none usable, the read policy (primary or error) decides.
+    if (region !== undefined && regions && candidates.length) {
+      const known = await regions().catch(() => undefined);
+      candidates = candidates.filter((index) => {
+        const entry = known?.[databaseId]?.[index];
+        return entry !== undefined && (entry.region === null || entry.region === region);
+      });
+    }
     if (!candidates.length) return undefined;
     const turn = rotation.get(databaseId) ?? 0;
     rotation.set(databaseId, turn + 1);

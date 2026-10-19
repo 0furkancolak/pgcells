@@ -92,6 +92,8 @@ Numeric options must be integers between 1 and the upper limit; a value outside 
 | `idleTimeoutSeconds` | 20 | 300 | Time after which an idle connection is closed |
 | `maxLifetimeSeconds` | 300 | 3600 | Maximum lifetime of a connection |
 | `placementCacheMs` | 5000 | 25000 (`PLACEMENT_CACHE_MAX_MS`) | In-process placement cache (`active` records only) |
+| `region` | none | | The region this application runs in (`eu-west`); a tenant whose node is in another region is refused with `WRONG_REGION`, and only replicas of this region are read. Absent: single-region mode, nothing is checked ([tenants.md](tenants.md#regions-zones-and-labels), [replicas.md](replicas.md#replica-locality)) |
+| `onWrongRegion` | none | | Called with the placement each time a context is refused for `WRONG_REGION` (metrics, logging) |
 | `staleIfErrorMs` | 0 (off) | 300000 | While the directory (`db0`) is unreachable (connection errors and `DATABASE_TIMEOUT` only), an expired `active` placement may be used for this much longer. Never used for `migrating`/`maintenance` records or after `invalidatePlacement`. See [Directory outages](#directory-outages) |
 | `tenantMaxInflight` | 0 (off) | 10000 | At most this many concurrent contexts (`withTenant`, `withTenantRead`, request scopes) per tenant in this process; a new one fails fast with `DATABASE_BUSY` so one noisy tenant cannot take all connections of its database. Off means nothing is counted per tenant |
 | `replicaMaxLagMs` | 5000 | 3600000 | Replica reads: a replica whose lag exceeds this is not used ([replicas.md](replicas.md)) |

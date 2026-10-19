@@ -4,7 +4,7 @@ import { boundedInteger } from "../config";
 import type { Connection } from "../driver";
 import { AppError } from "../errors";
 import type { Management } from "../management";
-import { validateTenantId } from "../tenants/model";
+import { validateLabels, validateRegionName, validateTenantId } from "../tenants/model";
 
 const DATABASE_STATUSES = ["active", "draining"] as const;
 const lockPlacement = (tx: Connection) => tx.query("SELECT pg_advisory_xact_lock(hashtextextended('tenant-placement',0))");
@@ -43,27 +43,78 @@ export async function releaseTenantIds(m: Management, ids: readonly string[]) {
 export const listReservedTenantIds = (m: Management) =>
   m.pools.platform.query<{ tenantId: string; reason: string }>(`SELECT tenant_id AS "tenantId",reason FROM platform.reserved_tenant_ids ORDER BY tenant_id`);
 
-/** Per-DB status, capacity, tenant count and size total (`load`); `configured`: whether it is in `DATABASE_URLS`. */
+/** Per-DB status, capacity, tenant count and size total (`load`); `configured`: whether it is in `DATABASE_URLS`. `region`, `residencyZone` and `labels` are
+ * the region model's node metadata (`null` / `{}` when never set). */
 export async function listDatabases(m: Management) {
-  const rows = await m.pools.platform.query<{ databaseId: string; status: string; capacity: number; tenants: number; load: number }>(
-    `SELECT n.database_id AS "databaseId",n.status,n.capacity,count(p.tenant_id)::integer AS tenants,COALESCE(sum(p.size),0)::integer AS load
+  const rows = await m.pools.platform.query<{
+    databaseId: string;
+    status: string;
+    capacity: number;
+    region: string | null;
+    residencyZone: string | null;
+    labels: Record<string, string>;
+    tenants: number;
+    load: number;
+  }>(
+    `SELECT n.database_id AS "databaseId",n.status,n.capacity,n.region,n.residency_zone AS "residencyZone",n.labels,count(p.tenant_id)::integer AS tenants,COALESCE(sum(p.size),0)::integer AS load
      FROM platform.nodes n LEFT JOIN platform.placements p ON p.database_id=n.database_id
-     GROUP BY n.database_id,n.status,n.capacity ORDER BY length(n.database_id),n.database_id`,
+     GROUP BY n.database_id,n.status,n.capacity,n.region,n.residency_zone,n.labels ORDER BY length(n.database_id),n.database_id`,
   );
   const configured = new Set(m.config.nodes.map((node) => node.id));
   return rows.map((row) => ({ ...row, configured: configured.has(row.databaseId) }));
 }
 
-/** `draining`: takes no new tenants, existing ones stay. Capacity can fall below the load; then the DB takes no new tenants. */
-export async function setDatabase(m: Management, databaseId: string, { status, capacity }: { status?: string; capacity?: number | string }) {
-  if (status === undefined && capacity === undefined) throw new AppError("USAGE", "Pass --status active|draining and/or --capacity N");
+export interface DatabaseSettings {
+  status?: string;
+  capacity?: number | string;
+  /** The region the database lives in; `"none"` clears it. */
+  region?: string;
+  /** The residency zone the database belongs to; `"none"` clears it. Refused while it would strand a tenant bound to another zone. */
+  zone?: string;
+  /** Labels to set (merged into the existing ones). */
+  labels?: Readonly<Record<string, string>>;
+  /** Label keys to remove. */
+  unlabel?: readonly string[];
+}
+
+const CLEAR = "none";
+const regionValue = (value: string | undefined, what: string) => (value === undefined ? undefined : value === CLEAR ? null : validateRegionName(value, what));
+
+/** `draining`: takes no new tenants, existing ones stay. Capacity can fall below the load; then the DB takes no new tenants. `region`, `zone` and `labels` describe the
+ * database for placement: a zone change is refused (`RESIDENCY_VIOLATION`) while tenants bound to a different zone live on it. */
+export async function setDatabase(m: Management, databaseId: string, settings: DatabaseSettings) {
+  const { status, capacity, labels, unlabel } = settings;
+  const region = regionValue(settings.region, "region");
+  const zone = regionValue(settings.zone, "zone");
+  if ([status, capacity, region, zone, labels, unlabel].every((value) => value === undefined))
+    throw new AppError("USAGE", "Pass --status active|draining, --capacity N, --region, --zone, --label k=v and/or --unlabel key");
   if (status !== undefined && !(DATABASE_STATUSES as readonly string[]).includes(status))
     throw new AppError("USAGE", `status must be one of: ${DATABASE_STATUSES.join(", ")}`);
   const capacityLimit = capacity === undefined ? null : boundedInteger(capacity, "capacity", 1_000_000);
-  const [row] = await m.pools.platform.query<{ databaseId: string; status: string; capacity: number }>(
-    `UPDATE platform.nodes SET status=COALESCE($2,status),capacity=COALESCE($3,capacity) WHERE database_id=$1 RETURNING database_id AS "databaseId",status,capacity`,
-    [databaseId, status ?? null, capacityLimit],
-  );
-  if (!row) throw new AppError("DATABASE_NOT_FOUND", `Database ${databaseId} is not registered`);
-  return row;
+  const add = validateLabels(labels ?? {});
+  const remove = [...(unlabel ?? [])];
+  for (const key of remove) validateLabels({ [key]: "x" });
+  if (Object.keys(add).some((key) => remove.includes(key))) throw new AppError("USAGE", "A label cannot be set and removed in the same call");
+  return m.pools.platform.transaction(async (tx) => {
+    await lockPlacement(tx);
+    const [node] = await tx.query<{ zone: string | null }>("SELECT residency_zone AS zone FROM platform.nodes WHERE database_id=$1 FOR UPDATE", [databaseId]);
+    if (!node) throw new AppError("DATABASE_NOT_FOUND", `Database ${databaseId} is not registered`);
+    if (zone !== undefined && zone !== node.zone) {
+      const [stranded] = await tx.query<{ count: number; zone: string }>(
+        "SELECT count(*)::integer AS count,min(residency_zone) AS zone FROM platform.placements WHERE database_id=$1 AND residency_zone IS NOT NULL AND residency_zone IS DISTINCT FROM $2::text",
+        [databaseId, zone],
+      );
+      if (stranded && stranded.count > 0)
+        throw new AppError("RESIDENCY_VIOLATION", `${stranded.count} tenant(s) bound to residency zone ${stranded.zone} live on ${databaseId}; move them before changing its zone`);
+    }
+    const [row] = await tx.query<{ databaseId: string; status: string; capacity: number; region: string | null; residencyZone: string | null; labels: Record<string, string> }>(
+      `UPDATE platform.nodes SET status=COALESCE($2,status),capacity=COALESCE($3,capacity),
+         region=CASE WHEN $4::boolean THEN $5::text ELSE region END,
+         residency_zone=CASE WHEN $6::boolean THEN $7::text ELSE residency_zone END,
+         labels=(labels || $8::text::jsonb) - ARRAY(SELECT pg_catalog.jsonb_array_elements_text($9::text::jsonb))
+       WHERE database_id=$1 RETURNING database_id AS "databaseId",status,capacity,region,residency_zone AS "residencyZone",labels`,
+      [databaseId, status ?? null, capacityLimit, region !== undefined, region ?? null, zone !== undefined, zone ?? null, JSON.stringify(add), JSON.stringify(remove)],
+    );
+    return row as NonNullable<typeof row>;
+  });
 }

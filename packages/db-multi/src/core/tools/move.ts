@@ -90,7 +90,28 @@ const assertPlacementOwner = (m: Management, op: Move, p: Placement) =>
     ownershipChanged,
   );
 
-export async function startMove(m: Management, tenantId: string, targetDatabaseId: string, writersDrained?: boolean, onStarted?: (move: Move) => void) {
+export interface MoveOptions {
+  /** A move to a database in another region is refused without this (`CROSS_REGION_MOVE`). It never lets a tenant leave its residency zone. */
+  allowCrossRegion?: boolean;
+}
+
+/** Residency and region rules for moving `source` to `targetDatabaseId`, read with the node rows locked `FOR SHARE` so a concurrent `database set --zone` waits. */
+async function assertMoveAllowed(tx: Connection, source: Placement, targetDatabaseId: string, options: MoveOptions) {
+  const nodes = await tx.query<{ databaseId: string; region: string | null; zone: string | null }>(
+    `SELECT database_id AS "databaseId",region,residency_zone AS zone FROM platform.nodes WHERE database_id IN ($1,$2) FOR SHARE`,
+    [source.databaseId, targetDatabaseId],
+  );
+  const from = nodes.find((node) => node.databaseId === source.databaseId);
+  const to = nodes.find((node) => node.databaseId === targetDatabaseId);
+  if (!to) throw new AppError("DATABASE_NOT_FOUND", `Database ${targetDatabaseId} is not registered`);
+  const zone = source.residencyZone ?? null;
+  if (zone !== null && to.zone !== zone)
+    throw new AppError("RESIDENCY_VIOLATION", `Tenant ${source.tenantId} is bound to residency zone ${zone}; ${targetDatabaseId} is ${to.zone === null ? "in no zone" : `in zone ${to.zone}`}`);
+  if (from?.region && to.region && from.region !== to.region && !options.allowCrossRegion)
+    throw new AppError("CROSS_REGION_MOVE", `${targetDatabaseId} is in region ${to.region}, the tenant lives in ${from.region}; pass --allow-cross-region to move it`);
+}
+
+export async function startMove(m: Management, tenantId: string, targetDatabaseId: string, writersDrained?: boolean, onStarted?: (move: Move) => void, options: MoveOptions = {}) {
   requireMaintenance(writersDrained);
   m.pools.nodeConfig(targetDatabaseId);
   const id = await withTenantLock(m, tenantId, async (assertLock) => {
@@ -105,6 +126,7 @@ export async function startMove(m: Management, tenantId: string, targetDatabaseI
     await assertLock();
     const moveId = crypto.randomUUID();
     await m.pools.platform.transaction(async (tx) => {
+      await assertMoveAllowed(tx, source, targetDatabaseId, options);
       await tx.query(
         "INSERT INTO platform.moves(id,tenant_id,target_database_id,source,status) VALUES ($1,$2,$3,$4::text::jsonb,'running')",
         [moveId, tenantId, targetDatabaseId, JSON.stringify(source)],
@@ -227,12 +249,20 @@ async function copyAndValidate(m: Management, op: Move, source: Database, target
 async function cutover(m: Management, op: Move, { assertOwned, checkpoint }: MoveRun) {
   const { source: from, targetDatabaseId, tenantId } = op;
   await assertOwned();
-  await claim(
-    m.pools.platform,
-    "UPDATE platform.placements SET database_id=$1,placement_version=placement_version+1,status='maintenance' WHERE tenant_id=$2 AND placement_version=$3 AND move_operation_id=$4 AND status='migrating' RETURNING 1",
+  // The target must still be in the tenant's residency zone when the placement switches (a zone change on the target in the meantime is refused here).
+  const switched = await m.pools.platform.query(
+    `UPDATE platform.placements p SET database_id=$1,placement_version=placement_version+1,status='maintenance'
+     WHERE p.tenant_id=$2 AND p.placement_version=$3 AND p.move_operation_id=$4 AND p.status='migrating'
+       AND (p.residency_zone IS NULL OR EXISTS (SELECT 1 FROM platform.nodes n WHERE n.database_id=$1 AND n.residency_zone=p.residency_zone)) RETURNING 1`,
     [targetDatabaseId, tenantId, from.placementVersion, op.id],
-    ownershipChanged,
   );
+  if (switched.length !== 1) {
+    const [still] = await m.pools.platform.query(
+      "SELECT 1 FROM platform.placements WHERE tenant_id=$1 AND placement_version=$2 AND move_operation_id=$3 AND status='migrating'",
+      [tenantId, from.placementVersion, op.id],
+    );
+    throw still ? new AppError("RESIDENCY_VIOLATION", `${targetDatabaseId} is no longer in the tenant's residency zone`) : ownershipChanged();
+  }
   await m.platform.changed(tenantId);
   await checkpoint("cutover");
   return m.platform.get(tenantId);

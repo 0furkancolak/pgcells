@@ -14,6 +14,6 @@ export { type ImportedUser, importUsers, jsonLinesSource, sqlSource } from "./co
 export { getMove, resumeMove, rollbackMove, startMove } from "./core/tools/move";
 export { type ConnectionBudget, type ConnectionBudgetInput, connectionBudget } from "./core/tools/pooler-plan";
 export { generatePoolerFiles, type PoolerFiles, type PoolerGenerateOptions } from "./core/tools/pooler-generate";
-export { replicaReport } from "./core/tools/replicas";
+export { replicaReport, setReplicaRegion } from "./core/tools/replicas";
 export { splitSqlDump } from "./core/tools/sql-dump";
 export { listDatabases, listReservedTenantIds, releaseTenantIds, reserveTenantIds, setDatabase } from "./core/tools/tenancy";

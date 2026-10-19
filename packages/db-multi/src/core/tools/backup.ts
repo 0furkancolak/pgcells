@@ -23,9 +23,9 @@ import { type MigrationReport, noReport } from "../migrations/batch";
 import { tenantMigrations } from "../migrations/registry";
 import { applyChain } from "../migrations/schema";
 import { migrationPrefix } from "../migrations/source";
-import { claimPlacement, pickDatabase, reread, withTenantSession } from "../operations/provision";
+import { claimPlacement, pickDatabase, placementRequest, reread, withTenantSession } from "../operations/provision";
 import type { TenantFields } from "../tenants/fields";
-import { type Kind, type Placement, placementColumns, placementSchema, qualified, quoteIdentifier, requireActive, validateTenantId } from "../tenants/model";
+import { type Kind, type Placement, placementColumns, type PlacementRequest, placementSchema, qualified, quoteIdentifier, requireActive, validateTenantId } from "../tenants/model";
 import { checkDatabases } from "../tenants/nodes";
 import { assertCompatible, buildSchema, insertRows, readRows, readSchema, type SchemaShape, type ServerFacts, serverFacts, snapshotTransaction } from "./copy";
 import { batches, openGzipWriter, readLines } from "./jsonl";
@@ -55,6 +55,8 @@ export type TenantBackup = {
   facts: ServerFacts;
   shape: SchemaShape;
   tables: TableFile[];
+  /** The residency zone the tenant was bound to; restore keeps it unless told otherwise. Absent in backups taken before regions existed or for an unrestricted tenant. */
+  residencyZone?: string;
   /** The `platform.tenants` row at the time it was taken (including application columns); absent in backups taken before this field existed. */
   tenant?: Record<string, unknown>;
   /** If the data was read from a replica: the source and the replay position caught up to before the tenant was read. */
@@ -133,7 +135,7 @@ async function writeTenant(m: Management, p: Placement, dir: string, signal?: Ab
     }
     const { tenantId, kind, schemaName, databaseId } = p;
     const row = tenant && (JSON.parse(tenant.row) as Record<string, unknown>);
-    return { format: FORMAT, tenantId, kind, size: placement?.size ?? 1, schemaName, databaseId, takenAt: new Date().toISOString(), facts, shape, tables, tenant: row, ...(replica ? { source: "replica" as const, replayLsn } : {}) };
+    return { format: FORMAT, tenantId, kind, size: placement?.size ?? 1, schemaName, databaseId, takenAt: new Date().toISOString(), facts, shape, tables, tenant: row, ...(p.residencyZone ? { residencyZone: p.residencyZone } : {}), ...(replica ? { source: "replica" as const, replayLsn } : {}) };
   }, snapshotTransaction(TENANT_TRANSFER_TIMEOUT_MS));
   await writeFile(join(partial, "tenant.json"), JSON.stringify(backup));
   await rename(partial, dir);
@@ -341,7 +343,7 @@ async function storedTenantRow(located: LocatedTenant, backup: TenantBackup): Pr
 }
 
 /** `tenant`: application fields that overwrite the values in the backup (same rules as `provisionTenant`); for required columns in an old backup. */
-export type RestoreOptions = { set?: string; databaseId?: string; size?: number; tenant?: TenantFields; signal?: AbortSignal; report?: MigrationReport };
+export type RestoreOptions = PlacementRequest & { set?: string; databaseId?: string; size?: number; tenant?: TenantFields; signal?: AbortSignal; report?: MigrationReport };
 
 /** The backup row's columns that can be written on the target, with the validated `tenant` fields on top. */
 async function restoredTenant(m: Management, located: LocatedTenant, backup: TenantBackup, fields: TenantFields | undefined) {
@@ -384,9 +386,11 @@ export async function restoreTenant(m: Management, tenantId: string, source: str
   const { tenant, skipped } = await restoredTenant(m, located, backup, options.tenant);
   const size = options.size ?? backup.size;
   let target = "";
-  const pick = async () => (target = await pickDatabase(m, tenantId, options.databaseId, backup.kind, size));
+  // The tenant keeps the residency zone it had when the backup was taken, unless the caller names another.
+  const request = placementRequest({ ...options, zone: options.zone ?? backup.residencyZone });
+  const pick = async () => (target = await pickDatabase(m, tenantId, options.databaseId, backup.kind, size, request));
   return withTenantSession(m, tenantId, pick, options, async (db, verify, assertOwned) => {
-    const p = await reread(m, await claimPlacement(m, tenantId, target, backup.kind, size, tenant));
+    const p = await reread(m, await claimPlacement(m, tenantId, target, backup.kind, size, tenant, request));
     if (p.status === "active") throw new AppError("TENANT_EXISTS", "Tenant is active; restore only rebuilds missing tenants");
     if (!["provisioning", "failed"].includes(p.status)) throw new AppError("TENANT_UNAVAILABLE", "Tenant has another operation");
     assertCompatible(backup.facts, await serverFacts(db));

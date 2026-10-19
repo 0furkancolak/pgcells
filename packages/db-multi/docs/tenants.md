@@ -51,7 +51,12 @@ Because the ID contains no `_`, the mapping is one-to-one and a 56-character ID 
 Placement is the platform record that holds where a tenant lives (the `Placement` type and the `placementSchema` zod schema come from `@0furkancolak/pgcells`):
 
 ```ts
-{ tenantId: "abc", databaseId: "db1", kind: "tenant", schemaName: "tenant_abc", status: "active", schemaVersion: 5, placementVersion: 1 }
+{ tenantId: "abc", databaseId: "db1", kind: "tenant", schemaName: "tenant_abc", status: "active", schemaVersion: 5, placementVersion: 1, residencyZone: "eu", region: "eu-west" }
+```
+
+`residencyZone` is the zone the tenant is bound to (`null`: unrestricted) and `region` is the region of the node it lives on (`null`: the node has none); both belong to the [region model](#regions-zones-and-labels).
+
+```ts
 ```
 
 | `status` | Meaning | For requests |
@@ -124,7 +129,8 @@ Before writing, `provision` and `restore` look for the `tenant_<id>` and `demo_<
 - If no database is given, among the databases with `status = active` that satisfy `load + size ≤ capacity`, the one with the lowest `(load + size) / capacity` ratio is chosen; ties are broken in the order `db0`, `db1` …. If none fits, `NO_CAPACITY`.
 - If the database is given by hand (`provision abc db1`), that database must be `active` and the tenant must fit.
 - A database in the `draining` state takes no new tenants; existing ones stay. Capacity may drop below the load; then the database also takes no new tenants.
-- The selection is in the same transaction as the placement record; when a half-finished provision is retried, the same database is used. If the same ID is requested again with a different database or kind, `TENANT_CONFLICT`.
+- The selection is in the same transaction as the placement record; when a half-finished provision is retried, the same database is used. If the same ID is requested again with a different database, kind or residency zone, `TENANT_CONFLICT`.
+- `--region`, `--zone` and `--label` narrow the choice to matching databases ([below](#regions-zones-and-labels)); if none matches or fits, `NO_CAPACITY` with the request in the message.
 
 ```sh
 bun run cli provision kadikoy --size 20     # db0 (load 0/1000)
@@ -138,6 +144,26 @@ bun run tools database set db1 --capacity 2000
 ```
 
 From code: `listDatabases(management)`, `setDatabase(management, "db0", { status: "draining", capacity: 2000 })` — `@0furkancolak/pgcells/tools`; `provisionTenant(management, "abc", undefined, { size: 20 })` — `@0furkancolak/pgcells/management`.
+
+## Regions, zones and labels
+
+A database can say where it lives; none of it is required, and a database with no region behaves exactly as before.
+
+```sh
+bun run tools database set db0 --region eu-west --zone eu
+bun run tools database set db1 --region us-east --zone us --label tier=gold
+bun run tools database set db1 --label dedicated=true       # skipped by automatic placement
+bun run tools database set db1 --unlabel tier --region none # "none" clears a region or zone
+bun run tools databases    # now lists region, residencyZone and labels per database
+```
+
+- **`region`** is where the database runs (`eu-west`). **`residency_zone`** is the legal area it belongs to (`eu`): several regions can share a zone. Both are lowercase names of up to 63 characters (`a-z`, `0-9`, `-`).
+- **Placement requests.** `provisionTenant(m, id, undefined, { region, zone, labels })` and `restoreTenant(…, { region, zone, labels })` (CLI `--region`, `--zone`, `--label k=v`) restrict the automatic choice to databases that match. A database labelled `dedicated=true` is skipped by automatic choice unless the request carries that label or names the database.
+- **Residency.** A tenant is bound to a zone: the requested `zone`, else the zone of the database it was placed on (none if that database has no zone). From then on `provision` onto, `restore` onto, `move` to and `adopt` into a database outside that zone is refused with `RESIDENCY_VIOLATION`, checked in the same transaction that writes the placement. `database set --zone` is refused while it would strand a tenant bound to another zone. A backup remembers the zone and `restore` keeps it.
+- **Moves.** `move` to a database in a different *region* needs `--allow-cross-region` (`CROSS_REGION_MOVE` otherwise); it never lets a tenant leave its zone.
+- **What this guarantees and what it does not:** the package never places or moves tenant data outside its zone. It cannot see application columns you add to `platform.tenants`, where you write backups or logs; `doctor` warns about personal-looking directory columns (`directory_pii`). See the [regions guide](https://github.com/0furkancolak/pgcells/blob/main/docs/guides/regions.md).
+
+From code: `setDatabase(m, "db1", { region, zone, labels, unlabel })`, `listDatabases(m)` (`@0furkancolak/pgcells/tools`).
 
 ## Readiness: `db.ready()`
 

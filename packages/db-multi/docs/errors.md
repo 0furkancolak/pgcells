@@ -70,10 +70,13 @@ The CLI writes the error to stderr as `{"error": "<code>", "message": "…"}` an
 | `TENANT_UNAVAILABLE` | The placement is not `active` (provisioning, maintenance, migrating, failed); import/backup/move on a tenant that is not active | 503; try again when the operation finishes, or complete the half-finished operation |
 | `TENANT_RESERVED` | provision/restore on a reserved ID | Another ID; or `unreserve` |
 | `TENANT_EXISTS` | Reserving an existing tenant; restore onto an active tenant | Restore only builds a missing tenant |
-| `TENANT_CONFLICT` | provision again with the same ID but a different database or kind (`--demo`) | Try again with the arguments of the first command |
+| `TENANT_CONFLICT` | provision again with the same ID but a different database, kind (`--demo`) or residency zone | Try again with the arguments of the first command |
 | `TENANT_BUSY` | Another management operation is in progress on the tenant | Wait for it to finish and try again |
 | `SCHEMA_EXISTS` | The ID's schema already exists in a database | Inspect the schema in the database named in the message; an ID has a single schema across all databases |
-| `NO_CAPACITY` | No `active` database fits | `database set <dbN> --capacity N`, add a new database, or reduce `--size` |
+| `NO_CAPACITY` | No `active` database fits (or none matches the requested `--region`/`--zone`/`--label`) | `database set <dbN> --capacity N`, add a new database, reduce `--size`, or relax the request |
+| `RESIDENCY_VIOLATION` | provision/restore/move/adopt would put a tenant on a database outside its residency zone, or `database set --zone` would strand a bound tenant | Choose a database in the tenant's zone; move bound tenants away before changing a database's zone |
+| `CROSS_REGION_MOVE` | `move` to a database in another region without `--allow-cross-region` | Pass `--allow-cross-region` if the move stays inside the tenant's zone |
+| `WRONG_REGION` | The tenant lives on a node in another region than the application (`createDatabase({ region })`); `err.tenantRegion` and `err.appRegion` say which | Route the request to the tenant's region (`regionGuard`: 421 or 307); never serve it across regions |
 | `PLACEMENT_CONFLICT` | The placement changed concurrently (CAS) or the tenant was moved after it was targeted | Run the command again |
 | `DEMO_TENANT_REQUIRED` | A demo seed or `demo-reset` on a real tenant | Only on tenants created with `--demo` |
 

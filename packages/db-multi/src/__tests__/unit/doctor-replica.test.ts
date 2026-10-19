@@ -10,7 +10,7 @@ const REPLICA = "postgres://admin:private-secret@replica.example.com/app";
 const TIMEOUTS = "statement_timeout=5000,lock_timeout=1000,client_connection_check_interval=1000";
 let pid = 1000;
 
-type Replica = { inRecovery?: boolean; lagMs?: number; identity?: string; settings?: string; pooled?: boolean; fail?: boolean };
+type Replica = { inRecovery?: boolean; lagMs?: number; identity?: string; settings?: string; pooled?: boolean; fail?: boolean; regionRow?: { nodeRegion: string | null; region: string | null } };
 function run(replica: Replica = {}) {
   const fake = fakeDriver((text, _params, pool) => {
     const onReplica = pool.url.includes("replica.example.com");
@@ -21,7 +21,8 @@ function run(replica: Replica = {}) {
     if (text.includes("pg_is_in_recovery")) return [{ in_recovery: replica.inRecovery ?? true, caught_up: false, lag_ms: replica.lagMs ?? 30 }];
     if (text.includes("set_config")) return [{}];
     if (text.includes("_migrations")) return (text.includes("_node_") ? nodeMigrations : platformMigrations).map(({ id, checksum }) => ({ id, checksum }));
-    if (text.includes("__moved_") || text.includes("platform.moves")) return [];
+    if (text.includes("__moved_") || text.includes("platform.moves") || text.includes("information_schema.columns") || text.includes("region IS NOT NULL")) return [];
+    if (text.includes("platform.replicas")) return [replica.regionRow ?? { nodeRegion: null, region: null }];
     if (text.includes("platform.nodes") || text.includes("node_identity")) return [{ database_id: onReplica ? (replica.identity ?? "db0") : "db0" }];
     if (text.includes("AS invalid")) return [{ invalid: 0, inactive: 0, moving: 0, recovery: 0 }];
     if (text.includes("standard_conforming_strings")) return [{ on: true }];
@@ -37,7 +38,8 @@ function run(replica: Replica = {}) {
     return result;
   });
 }
-const replicaChecks = (result: Awaited<ReturnType<typeof run>>) => result.checks.filter((check) => check.target === "db0#1");
+// `replica_region` is informational and covered by its own test below.
+const replicaChecks = (result: Awaited<ReturnType<typeof run>>) => result.checks.filter((check) => check.target === "db0#1" && check.check !== "replica_region");
 const outcome = (result: Awaited<ReturnType<typeof run>>) => Object.fromEntries(replicaChecks(result).map((check) => [check.check, check.ok]));
 
 test("a healthy direct replica passes every check, so a valid configuration keeps doctor ok", async () => {
@@ -78,4 +80,14 @@ test("a configuration without replicas adds no replica checks", async () => {
   const result = await doctor(app);
   expect(result.checks.some((check) => check.check.startsWith("replica_"))).toBe(false);
   await app.close();
+});
+
+test("replica_region is informational: the directory row, else the database's region, with a warning when they differ", async () => {
+  const detail = async (regionRow: { nodeRegion: string | null; region: string | null }) =>
+    (await run({ regionRow })).checks.find((check) => check.check === "replica_region");
+  expect(await detail({ nodeRegion: "eu-west", region: null })).toMatchObject({ target: "db0#1", ok: true, detail: "Replica region: eu-west (its database's region)." });
+  expect(await detail({ nodeRegion: "eu-west", region: "eu-west" })).toMatchObject({ ok: true, detail: "Replica region: eu-west (from the directory)." });
+  const mixed = await detail({ nodeRegion: "eu-west", region: "us-east" });
+  expect(mixed).toMatchObject({ ok: true, detail: expect.stringContaining("Warning: its database is in eu-west") });
+  expect(await detail({ nodeRegion: null, region: null })).toMatchObject({ ok: true, detail: "No region is recorded for this replica or its database." });
 });

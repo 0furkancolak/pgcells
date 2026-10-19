@@ -206,6 +206,19 @@ export default {
 
 `@0furkancolak/pgcells-redis` `createTenantWorker` builds `createDbScope(db, job.data.tenantId, placement)` for each job and gives the handler `{ tenantId, db }`: [`@0furkancolak/pgcells-redis` queues](https://github.com/0furkancolak/pgcells/blob/main/packages/redis/docs/queues.md).
 
+## Regions: `regionGuard`
+
+With `createDatabase({ region: "eu-west" })` a tenant context for a tenant whose node is in another region fails with `WRONG_REGION` instead of reaching a database across an ocean. `regionGuard` turns that into an HTTP answer *before* the route runs, and `createDbScope`/`RequestDb` expose `placement()` and `region` for your own checks:
+
+```ts
+import { dbMiddleware, regionGuard } from "@0furkancolak/pgcells/middleware";
+
+app.use(dbMiddleware({ database: db, rootDomain: "example.com" }));
+app.use(regionGuard({ mode: "redirect", locate: (placement, c) => `https://${placement.region}.example.com${new URL(c.req.url).pathname}` }));
+```
+
+`mode: "421"` (default) answers `421 Misdirected Request` with the tenant's region in the body and in `x-pgcells-region`; `"redirect"` answers `307` to `locate(placement, c)` and falls back to 421 without a URL. `onWrongRegion` (on the guard, and on `createDatabase`) is a hook for metrics; it cannot allow the request. Without `region` on the database, or for a node with no region, the guard does nothing. Getting the request to the right region in the first place (geo DNS, an edge router) is not the library's job. See the [regions guide](https://github.com/0furkancolak/pgcells/blob/main/docs/guides/regions.md#5-routing-a-request-to-the-right-region).
+
 ## Common errors
 
 - **`INVALID_CONFIG: dbMiddleware needs either database or driver`** — you gave both (or neither); or you gave `perRequest: true` together with `database`.

@@ -6,18 +6,27 @@ export const nodeRow = z.object({
   createdAt: z.date(),
   status: z.enum(["active","draining"]),
   capacity: z.number().int(),
+  region: z.string().nullable(),
+  residencyZone: z.string().nullable(),
+  labels: z.unknown(),
 });
 export const nodeInsert = z.object({
   databaseId: z.string(),
   createdAt: z.date().optional(),
   status: z.enum(["active","draining"]).optional(),
   capacity: z.number().int().optional(),
+  region: z.string().nullable().optional(),
+  residencyZone: z.string().nullable().optional(),
+  labels: z.unknown().optional(),
 });
 export const nodeColumns = {
   databaseId: "database_id",
   createdAt: "created_at",
   status: "status",
   capacity: "capacity",
+  region: "region",
+  residencyZone: "residency_zone",
+  labels: "labels",
 } as const;
 export type NodeRow = z.infer<typeof nodeRow>;
 export type NodeInsert = z.infer<typeof nodeInsert>;

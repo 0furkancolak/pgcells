@@ -25,7 +25,7 @@ test("replicaReport lists each replica by number with its lag, and opens and clo
   expect(report).toEqual({
     ok: true,
     maxLagMs: 5000,
-    replicas: [{ databaseId: "db0", replica: 1, up: true, inRecovery: true, lagMs: 40, usable: true }],
+    replicas: [{ databaseId: "db0", replica: 1, up: true, inRecovery: true, lagMs: 40, usable: true, region: null }],
   });
   expect(fake.pools.length).toBeGreaterThan(opened);
   expect(fake.pools.slice(opened).every((pool) => pool.closed)).toBe(true);
@@ -44,6 +44,32 @@ test("a lagging or unreachable replica makes ok false and never leaks URLs, host
   expect(report.replicas[0]).toMatchObject({ up: false, usable: false, error: "ECONNREFUSED" });
   const text = JSON.stringify(report);
   for (const secret of ["secret-pw", "replica.example.com", "primary.example.com", "postgres://"]) expect(text).not.toContain(secret);
+});
+
+test("the report says where each replica lives: its own row, else its node's region", async () => {
+  const { app } = open(
+    (text) => (text.includes("platform.replicas") ? [{ databaseId: "db0", nodeRegion: "eu-west", ordinal: 2, region: "us-east" }] : healthy(text)),
+    [`db0=${REPLICA}`, `db0=postgres://app:secret-pw@replica2.example.com/app`],
+  );
+  const report = await replicaReport(app);
+  expect(report.replicas.map((replica) => [replica.replica, replica.region])).toEqual([[1, "eu-west"], [2, "us-east"]]);
+  await app.close();
+});
+
+test("setReplicaRegion validates the address and the replica count, and writes or removes the row", async () => {
+  const written: unknown[][] = [];
+  const { app } = open((text, params) => {
+    if (text.startsWith("INSERT INTO platform.replicas") || text.startsWith("DELETE FROM platform.replicas")) written.push([text.split(" ")[0], ...params]);
+    return text.startsWith("INSERT") ? [{ region: params[2] }] : [];
+  });
+  const { setReplicaRegion } = await import("../../core/tools/replicas");
+  expect(await setReplicaRegion(app, "db0#1", "eu-west")).toEqual({ replica: "db0#1", region: "eu-west" });
+  expect(await setReplicaRegion(app, "db0#1", "none")).toEqual({ replica: "db0#1", region: null });
+  expect(written).toEqual([["INSERT", "db0", 1, "eu-west"], ["DELETE", "db0", 1]]);
+  for (const [address, code] of [["db0", "USAGE"], ["db0#9", "USAGE"], ["db0#2", "INVALID_CONFIG"], ["db5#1", "DATABASE_NOT_FOUND"]] as const)
+    await expect(setReplicaRegion(app, address, "eu-west")).rejects.toMatchObject({ code });
+  await expect(setReplicaRegion(app, "db0#1", "EU West")).rejects.toMatchObject({ code: "INVALID_CONFIG" });
+  await app.close();
 });
 
 test("no configured replicas is ok with an empty list", async () => {

@@ -19,6 +19,17 @@ export class DeadlineError extends AppError {
   }
 }
 
+/** `WRONG_REGION`: the tenant lives in another region than this application (`createDatabase({ region })`). Carries both regions so a router can answer with a redirect. */
+export class WrongRegionError extends AppError {
+  constructor(
+    readonly tenantId: string,
+    readonly tenantRegion: string,
+    readonly appRegion: string,
+  ) {
+    super("WRONG_REGION", `Tenant ${tenantId} lives in region ${tenantRegion}; this application runs in ${appRegion}`);
+  }
+}
+
 /** Driver-independent code: an AppError code, SQLSTATE or connection code. Bun carries SQLSTATE in `errno`; pg gives no code on disconnects. */
 export function errorCode(error: unknown): string {
   if (error instanceof AppError) return error.code;

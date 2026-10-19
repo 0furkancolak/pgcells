@@ -104,14 +104,14 @@ The staleness bound matters because moves rely on it: after a move marks the pla
 - **Stale-if-error** (`staleIfErrorMs`, off by default, at most 5 minutes): when the directory is unreachable, an expired `active` placement is served for a bounded extra time. It is safe because of *fencing* (section 7): a process that is stale anyway cannot write to a moved tenant's old copy ✅. `migrating` and `maintenance` records are never cached, so they are never served stale.
 - Writes to the directory (create tenants, move tenants, register nodes) go to the `db0` primary only. While `db0` is down a remote region cannot create or move tenants; serving existing tenants continues. `db0` failover is the database provider's job; pgcells does not promote.
 
-Keep personal data out of the directory 🔜: `platform.tenants` may carry application columns (for example `owner_email`). They are allowed, but `doctor` warns, because the directory lives in one region.
+Keep personal data out of the directory ✅: `platform.tenants` may carry application columns (for example `owner_email`). They are allowed, but `doctor` lists the personal-looking ones (`directory_pii`, informational), because the directory lives in one region and that region holds them whatever the tenant's residency zone says.
 
 ## 5. Routing a request to the right region
 
 pgcells resolves *which cell*; getting the request to the right **region** is the edge's job:
 
-- Give each tenant a hostname (`acme.example.com`). Geo-DNS or an edge router maps it to the tenant's `home_region` 🔜 (today you maintain that mapping yourself).
-- If a request still reaches the wrong region, the safe default is to **fail**, not to silently talk to a cell across an ocean. 🔜 `createDatabase({ region: "eu-west" })` plus the `regionGuard` middleware responds `421` (or `307` to the right host, by option) and calls `onWrongRegion`. Without `region`, nothing changes (single-region mode).
+- Give each tenant a hostname (`acme.example.com`). Geo-DNS or an edge router maps it to the tenant's region (that mapping is yours to maintain; each placement carries the node's `region` to build it from).
+- If a request still reaches the wrong region, the safe default is to **fail**, not to silently talk to a cell across an ocean. ✅ `createDatabase({ region: "eu-west" })` makes every tenant context for a tenant of another region fail with `WRONG_REGION` (and calls `onWrongRegion`); the `regionGuard` middleware answers `421` (or `307` to the right host, by option) before the route runs. Without `region`, nothing changes (single-region mode), and a node with no region is always served. *Tested* against two simulated regions: a request for an eu tenant arriving at the us application read only the directory and never queried the tenant's cell.
 - Application-level caches, queues and sessions are **per region** too (Redis per region). Never share them across regions: it breaks residency and adds latency.
 
 ## 6. Consistency model
@@ -154,11 +154,11 @@ Today ✅ the move is correct but **offline**: the tenant is unavailable from `m
 
 **Zero-downtime move** 🔜 (later): initial snapshot + logical replication catch-up, then a write pause of seconds for the cutover. Targets: plain PostgreSQL 16, a tenant up to 50 GB, pause ≤ 5 s. Provider support depends on `wal_level = logical`, primary keys (or `REPLICA IDENTITY FULL`), and sequence sync at cutover ⚠️; the support matrix will say "supported / restricted / unsupported" per provider.
 
-**Cross-region moves** require an explicit flag (`--allow-cross-region`) and must satisfy the tenant's residency zone (section 8).
+**Cross-region moves** ✅ require an explicit flag (`--allow-cross-region`, `CROSS_REGION_MOVE` otherwise) and must satisfy the tenant's residency zone (section 8). The check is made when the move starts, under a share lock on both node rows, and again in the statement that switches the placement, so changing a node's zone in between cannot sneak a tenant out of its zone.
 
 ## 8. Residency
 
-🔜 Nodes carry a `region` and a `residency_zone` (for example `eu`). A tenant carries a `residency_zone` (empty = unrestricted). `provision`, `restore`, `move` and `adopt` reject a target outside the zone (`RESIDENCY_VIOLATION`) in the same SQL transaction that writes the placement.
+✅ Nodes carry a `region`, a `residency_zone` (for example `eu`) and labels (`tools database set db1 --region eu-west --zone eu --label tier=gold`). A tenant carries a `residency_zone` (empty = unrestricted): the one it was provisioned with, else its node's. `provision`, `restore`, `move` and `adopt` reject a target outside the zone (`RESIDENCY_VIOLATION`) in the same SQL transaction that writes the placement, and `database set --zone` refuses to strand a bound tenant. A backup remembers the zone and `restore` keeps it. Placement requests (`--region`, `--zone`, `--label`) narrow automatic choice, and a database labelled `dedicated=true` takes only tenants that ask for it. Details: [tenants.md](../../packages/db-multi/docs/tenants.md#regions-zones-and-labels).
 
 What this guarantees: **the package never places or moves tenant data outside its zone.** What it cannot guarantee, and the documentation says so: the application columns you add to the directory (`owner_email`), where you write backups, your logs, your analytics pipeline, your Redis. `doctor` warns about the ones it can see.
 
@@ -178,26 +178,26 @@ A short checklist for regulated deployments:
 | Used by the app | Yes, explicit `tenantRead` ✅ | No, except after promotion |
 | Failure policy | Fall back to the primary or error ✅ | Promote, then repoint the cell's pooler 🔜 runbook and `doctor` checks |
 
-Replica selection is round-robin among healthy, caught-up replicas ✅; 🔜 each replica gets a `region` so the router prefers local ones and never mixes continents. Cell failover = promote the DR replica and point the pooler's database alias at it; because the application connects to the **pooler** (stable name), no application change is needed. Position-based node identity (`DATABASE_URLS[i]` = `db<i>`) is verified against `platform.node_identity` after failover ✅.
+Replica selection is round-robin among healthy, caught-up replicas ✅. ✅ A replica lives in its database's region unless the directory says otherwise (`tools replica set db1#2 --region us-east`); an application opened with `createDatabase({ region })` reads only from replicas of its own region and otherwise falls back by policy (primary or `REPLICA_UNAVAILABLE`), so it never mixes continents ([replicas.md](../../packages/db-multi/docs/replicas.md#replica-locality)). Selection by residency *zone* is not implemented; the unit is the region. Cell failover = promote the DR replica and point the pooler's database alias at it; because the application connects to the **pooler** (stable name), no application change is needed. Position-based node identity (`DATABASE_URLS[i]` = `db<i>`) is verified against `platform.node_identity` after failover ✅.
 
 ## 10. Failure modes: what happens today and the target
 
 | Failure | Today | Target |
 |---|---|---|
 | A cell's primary is down | Only that cell's tenants fail (`DATABASE_UNAVAILABLE`/`DATABASE_TIMEOUT` within ~7 s); others are fine ✅ (e2e 8) | Same, plus documented promote-DR runbook 🔜 |
-| Pooler fleet down | Same as cell down for that region ✅ | ≥ 2 poolers per cell, documented; failover drill in CI-style test 🔜 |
+| Pooler fleet down | Same as cell down for that region ✅; measured: requests fail at the acquire deadline with a retryable `unreachable` error and recover within a second of the pooler returning ([connections](connections.md#8-deploys-restarts-and-failover)) | ≥ 2 poolers per cell behind a load balancer ✅ |
 | Redis down | Falls back to process cache then directory; sessions fail open ✅ (e2e 10) | Same |
 | `db0` / directory unreachable | Cached tenants work for the cache TTL (5–25 s) plus `staleIfErrorMs` (if set), then placement reads fail for everyone; no provisioning or moves ✅ | Same; a replica of `db0` in each region answers `active` lookups meanwhile ✅ |
 | Whole region down | Its tenants are unavailable; other regions fine **if** they can still reach the directory (a directory replica or `staleIfErrorMs` covers it) ✅ | DR promotion in the zone 🔜 |
 | Stale placement after a move | Bounded by TTL + wait, and a stale writer fails with `undefined_table` after cutover (fencing) ✅ | Same |
-| Wrong-region request | Works, slowly, across regions | `421`/`307` or hook 🔜 |
+| Wrong-region request | Refused with `WRONG_REGION` when the application has a `region` (421/307 through `regionGuard`); without one it works, slowly, across regions ✅ | Same |
 
 ## 11. Capacity and noisy neighbours
 
 - Give each tenant a `size` (1–100, a relative load estimate) and each cell a `capacity` (default 1000); placement picks the active cell with the lowest `(load + size) / capacity` ✅.
 - Schema-per-tenant puts every tenant's tables in one catalog. Rule of thumb: stay in the hundreds to low thousands of tenants per cell and tens of tables each; watch catalog size, autovacuum and migration time. When a cell is full, **add a cell** (append to `DATABASE_URLS`, `bootstrap`) rather than growing it.
-- A tenant that dominates its cell should move to a dedicated cell 🔜 (`pin`/labels so automatic placement never co-locates others).
-- Per-tenant in-flight limits 🔜 (see [connections](connections.md#9-fairness-one-tenant-must-not-starve-the-rest)).
+- A tenant that dominates its cell should move to a dedicated cell ✅: label the cell `dedicated=true` (automatic placement then never co-locates others) and `provision`/`move` the tenant onto it by name.
+- Per-tenant in-flight limits ✅ (`tenantMaxInflight`, see [connections](connections.md#9-fairness-one-tenant-must-not-starve-the-rest)).
 
 ## 12. Anti-patterns
 
@@ -209,7 +209,18 @@ Replica selection is round-robin among healthy, caught-up replicas ✅; 🔜 eac
 - Treating the directory as a transactional dependency of every request.
 - Relying on pub/sub invalidation for correctness; only TTLs are a guarantee.
 
-## 13. Status
+## 13. How this is tested
+
+`compose.regions.yaml` (project `pgcells-regions`) starts three PostgreSQL databases standing for two regions (`db0`, the directory, and `db1` in eu-west; `db2` in us-east) and a toxiproxy whose latency stands for the ocean. The suite `regions-stack.test.ts` runs the region model against it:
+
+- a request for an eu tenant arriving at the us application is refused before any tenant data is touched (only the directory is read), and `regionGuard` answers 421 or 307;
+- a cold placement read from the us application to the eu directory costs the round trip (about 90–110 ms with 80 ms injected), a cached one does not (0.01 ms);
+- with the directory partitioned from the us application, a tenant it had cached keeps working for the `staleIfErrorMs` window, an uncached one fails with a classified error, and everything heals when the partition does;
+- provisioning into the other region from an eu management process works but is visibly slower (4–5× in the run: provisioning is many round trips), which is why management belongs next to the cells it manages.
+
+Latency is *simulated* on one machine: it proves the routing, refusals and failure behaviour, not real inter-region performance. Real networks, real provider failover and Hyperdrive stay ⚠️ not verified. Replica lag under load is covered by the single-region replica tests (`replica.test.ts`), not repeated here.
+
+## 14. Status
 
 | Capability | Status |
 |---|---|
@@ -217,9 +228,10 @@ Replica selection is round-robin among healthy, caught-up replicas ✅; 🔜 eac
 | TTL-bounded cache + Redis invalidation, CAS on `placement_version`, locks | ✅ |
 | Replica reads with lag guard, request-scoped read-your-writes | ✅ |
 | Offline move, backup/restore, adopt | ✅ |
-| Node `region`/labels/`residency_zone`, tenant `home_region`, residency checks | 🔜 |
-| `regionGuard` / `onWrongRegion`, `createDatabase({ region })` | 🔜 |
-| Replica locality | 🔜 |
+| Node `region`/labels/`residency_zone`, tenant residency zone, residency checks | ✅ |
+| `regionGuard` / `onWrongRegion`, `createDatabase({ region })` | ✅ |
+| Replica locality (by region) | ✅ |
+| Region model on a simulated two-region stack (latency by proxy) | ✅ |
 | Fencing at cutover | ✅ |
 | Directory replicas, stale-if-error | ✅ |
 | Causal read tokens | 🔜 |

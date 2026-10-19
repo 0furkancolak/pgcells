@@ -8,7 +8,7 @@ import { migrateBatch, migrationLimits, type MigrationReport, type MigrationRunO
 import { applyChain, applySeeds, pendingAt, pendingSeeds, type SessionConnection } from "../migrations/schema";
 import { SEED_PROFILES, type SeedProfile } from "../migrations/source";
 import type { TenantFields, TenantRow } from "../tenants/fields";
-import { type Kind, type Placement, quoteIdentifier, requireActive, tenantSchemas, validateTenantId } from "../tenants/model";
+import { type Kind, type Placement, type PlacementRequest, quoteIdentifier, requireActive, tenantSchemas, validateTenantId } from "../tenants/model";
 import { checkDatabases } from "../tenants/nodes";
 import { afterGrace, cancelled, openManagementSession, ownershipCheck, tenantManagementKey, withTenantLock } from "./locks";
 
@@ -17,7 +17,14 @@ type Check = () => Promise<void>;
 export type SeedOptions = Options & { profile?: SeedProfile; dryRun?: boolean };
 /** `size`: the tenant's estimated load 1–100 (default 1); placement uses it to find the least loaded `active` database. `tenant`: the application's
  * `platform.tenants` columns (`{ name: "…", owner_email: "…" }`), written only to a new tenant record. */
-export type ProvisionOptions = Options & { demo?: boolean; size?: number; tenant?: TenantFields };
+/** `region`, `zone` and `labels` narrow automatic placement to matching databases; `zone` is also the tenant's residency zone (default: the chosen database's zone). */
+export type ProvisionOptions = Options & PlacementRequest & { demo?: boolean; size?: number; tenant?: TenantFields };
+/** The placement-narrowing part of the options (undefined values are dropped). */
+export const placementRequest = ({ region, zone, labels }: PlacementRequest): PlacementRequest => ({
+  ...(region !== undefined && { region }),
+  ...(zone !== undefined && { zone }),
+  ...(labels !== undefined && { labels }),
+});
 const demoRequired = () => new AppError("DEMO_TENANT_REQUIRED", "Only demo tenants accept demo seeds or reset");
 const unavailable = (message: string) => new AppError("TENANT_UNAVAILABLE", message);
 /** A real tenant gets only install seeds; a demo tenant gets install and demo seeds. */
@@ -97,7 +104,7 @@ export async function assertTenantSchemaFree(m: Management, tenantId: string) {
 
 /** Database readiness (all databases), then the registered placement's database (a retry with the same intent) or, for a new tenant, schema
  * uniqueness and placement selection. Does not write: the placement is written by `claimPlacement` once the node session is also acquired. */
-export async function pickDatabase(m: Management, tenantId: string, databaseId: string | undefined, kind: Kind, size?: number) {
+export async function pickDatabase(m: Management, tenantId: string, databaseId: string | undefined, kind: Kind, size?: number, request?: PlacementRequest) {
   await checkDatabases(
     m.pools,
     m.config.nodes.map((node) => node.id),
@@ -106,17 +113,21 @@ export async function pickDatabase(m: Management, tenantId: string, databaseId: 
     if (errorCode(error) !== "TENANT_NOT_FOUND") throw error;
   });
   if (existing) {
-    if ((databaseId !== undefined && existing.databaseId !== databaseId) || existing.kind !== kind)
+    if (
+      (databaseId !== undefined && existing.databaseId !== databaseId) ||
+      existing.kind !== kind ||
+      (request?.zone !== undefined && (existing.residencyZone ?? null) !== request.zone)
+    )
       throw new AppError("TENANT_CONFLICT", "Tenant exists with different placement intent");
     return existing.databaseId;
   }
   await assertTenantSchemaFree(m, tenantId);
-  return m.platform.choose(tenantId, databaseId, size);
+  return m.platform.choose(tenantId, databaseId, size, request);
 }
 
 /** Writes the placement to the chosen database (returns the same one if registered); called while both tenant locks are held. `tenant` holds validated fields. */
-export const claimPlacement = (m: Management, tenantId: string, databaseId: string, kind: Kind, size?: number, tenant?: TenantRow) =>
-  m.platform.create(tenantId, databaseId, kind, size, tenant);
+export const claimPlacement = (m: Management, tenantId: string, databaseId: string, kind: Kind, size?: number, tenant?: TenantRow, request?: PlacementRequest) =>
+  m.platform.create(tenantId, databaseId, kind, size, tenant, request);
 
 /** Migrations, install seeds (then demo seeds for a demo tenant), then `active`. */
 async function migrateSeedActivate(m: Management, found: Placement, db: SessionConnection, verify: Check, assertOwned: Check, report: MigrationReport) {
@@ -136,9 +147,9 @@ export async function provisionTenant(m: Management, tenantId: string, databaseI
   const kind = options.demo ? "demo" : "tenant";
   const tenant = await m.platform.tenantFields(options.tenant);
   // The database is chosen under the platform tenant lock; the placement is written only once the node lock is also held.
-  const pick = () => m.span("provision.pick", () => pickDatabase(m, tenantId, databaseId, kind, options.size), { tenantId });
+  const pick = () => m.span("provision.pick", () => pickDatabase(m, tenantId, databaseId, kind, options.size, placementRequest(options)), { tenantId });
   return withTenantSession(m, tenantId, pick, options, async (db, verify, assertOwned, target) => {
-    const claimed = await m.span("provision.claim", () => claimPlacement(m, tenantId, target, kind, options.size, tenant), { tenantId });
+    const claimed = await m.span("provision.claim", () => claimPlacement(m, tenantId, target, kind, options.size, tenant, placementRequest(options)), { tenantId });
     const placement = await reread(m, claimed);
     if (!["active", "provisioning", "failed"].includes(placement.status)) throw unavailable("Tenant has another operation");
     if (placement.status === "active") {

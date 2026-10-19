@@ -7,6 +7,7 @@ import type { Management } from "../management";
 import { tenantMigrations } from "../migrations/registry";
 import { pendingPlatformMigrations, type PlatformScope } from "../operations/bootstrap";
 import { openSession } from "../operations/locks";
+import { validateRegionName } from "../tenants/model";
 import { usesTransactionPooler } from "../tenants/pooler";
 import { probeReplica } from "../tenants/replicas";
 import { connectionBudget, type ConnectionBudgetInput } from "./pooler-plan";
@@ -50,7 +51,37 @@ async function checkPlatformMigrations(add: Add, db: Connection, scope: Platform
   }
 }
 
-async function inspectPlatform(m: Management, add: Add) {
+/** Column names on `platform.tenants` that look like personal data (name-based, so it can be wrong in both directions). */
+const PERSONAL_COLUMNS =
+  "SELECT column_name AS name FROM information_schema.columns WHERE table_schema='platform' AND table_name='tenants' AND column_name ~* '(e_?mail|phone|mobile|gsm|first_?name|last_?name|full_?name|birth|address|ssn|national_?id|passport|tax_?id)' ORDER BY column_name LIMIT 50";
+const NODE_REGIONS = "SELECT database_id AS \"databaseId\",region FROM platform.nodes WHERE region IS NOT NULL ORDER BY database_id";
+
+/** Informational (always ok): personal-looking columns on the directory, and, given the application's region, whether any database lives there. */
+async function inspectRegions(m: Management, add: Add, appRegion: string | undefined) {
+  const columns = (await m.pools.platform.query<{ name: string }>(PERSONAL_COLUMNS)).map((row) => row.name);
+  add(
+    "directory_pii",
+    true,
+    columns.length
+      ? `platform.tenants has columns that look like personal data (${columns.join(", ")}). The directory lives in db0's region, so this region holds that data whatever the tenant's own residency zone says; keep personal data in the tenant's own cell.`
+      : "No personal-data-looking columns on platform.tenants.",
+  );
+  const regions = await m.pools.platform.query<{ databaseId: string; region: string }>(NODE_REGIONS);
+  if (!regions.length) return add("app_region", true, "No database has a region; the region model is not in use.");
+  if (appRegion === undefined)
+    return add("app_region", true, `Databases have regions (${[...new Set(regions.map((row) => row.region))].join(", ")}). Pass --app-region to check an application's region, and set createDatabase({ region }) in that application: without it nothing stops it from serving tenants of other regions.`);
+  validateRegionName(appRegion, "--app-region");
+  const local = regions.filter((row) => row.region === appRegion);
+  add(
+    "app_region",
+    local.length > 0,
+    local.length
+      ? `${local.length} database(s) live in region ${appRegion} (${local.map((row) => row.databaseId).join(", ")}).`
+      : `No database lives in region ${appRegion}; an application with createDatabase({ region: "${appRegion}" }) would refuse every tenant (WRONG_REGION).`,
+  );
+}
+
+async function inspectPlatform(m: Management, add: Add, appRegion?: string) {
   const { nodes } = m.config;
   const db = m.pools.platform;
   await checkPlatformMigrations(add, db, "platform");
@@ -71,6 +102,7 @@ async function inspectPlatform(m: Management, add: Add) {
   const recovery = `Runner/recovery records: ${summary.recovery}. If no runner is running, inspect the migration-recover prerequisites.`;
   add("migration_recovery", summary.recovery === 0, recovery);
   add("operational_states", true, `Inactive tenants: ${summary.inactive}; those with a move operation: ${summary.moving}. These are not changed automatically.`);
+  await inspectRegions(m, add, appRegion);
 }
 
 /** Fenced source copies on a node: schemas a completed move renamed to `<schema>__moved_<id>`. */
@@ -192,6 +224,20 @@ const ANSWER_DEADLINE_SLACK_MS = 1500;
 type PgBouncerSettings = ReadonlyMap<string, string | null>;
 
 /** Reads the pooler console once; returns its settings so that other checks (timeouts, connection budget) reuse them. */
+/** Informational (always ok): where the directory says this replica lives, with a warning when that differs from its node's region (a regional application reads only from replicas in its own region). */
+async function inspectReplicaRegion(m: Management, node: DatabaseNode, ordinal: number, add: Add) {
+  const [row] = await m.pools.platform.query<{ nodeRegion: string | null; region: string | null }>(
+    `SELECT n.region AS "nodeRegion",r.region FROM platform.nodes n LEFT JOIN platform.replicas r ON r.database_id=n.database_id AND r.ordinal=$2 WHERE n.database_id=$1`,
+    [node.id, ordinal],
+  );
+  const region = row?.region ?? row?.nodeRegion ?? null;
+  const detail =
+    region === null
+      ? "No region is recorded for this replica or its database."
+      : `Replica region: ${region}${row?.region ? " (from the directory)" : " (its database's region)"}.`;
+  add("replica_region", true, row?.region && row.nodeRegion && row.region !== row.nodeRegion ? `${detail} Warning: its database is in ${row.nodeRegion}; applications in ${row.nodeRegion} will not read from it.` : detail);
+}
+
 async function inspectPgBouncer(m: Management, adminUrl: string, consoleDriver: Driver | undefined, add: Add): Promise<PgBouncerSettings> {
   const url = URL.parse(adminUrl);
   if (!url || !["postgres:", "postgresql:"].includes(url.protocol) || url.pathname !== "/pgbouncer" || url.search)
@@ -246,7 +292,7 @@ async function inspectBudget(m: Management, node: DatabaseNode, settings: PgBoun
 
 /** `consoleDriver`: PgBouncer admin console client; defaults to Bun SQL (the tools run on Bun and the console rejects postgres.js's
  * startup type queries). */
-export async function doctor(m: Management, options: { pgbouncerUrl?: string; pooledUrls?: string; consoleDriver?: Driver; budget?: BudgetShape } = {}) {
+export async function doctor(m: Management, options: { pgbouncerUrl?: string; pooledUrls?: string; consoleDriver?: Driver; budget?: BudgetShape; appRegion?: string } = {}) {
   const pooled = options.pooledUrls === undefined ? undefined : runtimeUrls(m, options.pooledUrls);
   const checks: Check[] = [];
   /** Checks a single target; since driver errors can contain credentials, an error becomes a check with its details hidden. */
@@ -259,13 +305,15 @@ export async function doctor(m: Management, options: { pgbouncerUrl?: string; po
     }
   }
 
-  await inspect("platform", (add) => inspectPlatform(m, add));
+  await inspect("platform", (add) => inspectPlatform(m, add, options.appRegion));
   for (const [index, node] of m.config.nodes.entries()) {
     await inspect(node.id, (add) => inspectNode(m, node, add));
     const url = pooled?.[index];
     if (url) await inspect(node.id, (add) => inspectPooled(m, url, add));
-    for (const [replicaIndex, replicaUrl] of node.replicas.entries())
+    for (const [replicaIndex, replicaUrl] of node.replicas.entries()) {
       await inspect(`${node.id}#${replicaIndex + 1}`, (add) => inspectReplica(m, node, replicaUrl, add));
+      await inspect(`${node.id}#${replicaIndex + 1}`, (add) => inspectReplicaRegion(m, node, replicaIndex + 1, add));
+    }
   }
   const { pgbouncerUrl, consoleDriver, budget } = options;
   if (budget && pgbouncerUrl === undefined) throw new AppError("USAGE", "The connection budget reads the pooler's sizes: pass --pgbouncer-url as well");

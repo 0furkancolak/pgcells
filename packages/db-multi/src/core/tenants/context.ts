@@ -39,10 +39,13 @@ export function createWithTenant(
   pools: Pick<Pools, "node">,
   placements: { get(id: string): Placement | Promise<Placement> },
   lifecycle?: ContextLifecycle,
+  /** Throws if this process must not serve the placement (wrong region); runs before anything else. */
+  guard?: (placement: Placement) => void,
 ) {
   function forPlacement<T>(placement: Placement, work: (db: TenantContext) => Promise<T>, onWrite?: () => void): Promise<T> {
     let db: Database;
     try {
+      guard?.(placement);
       // The schema/tenant match is validated when the placement is read; bind() checks the identifier.
       requireActive(placement);
       db = pools.node(placement.databaseId);
@@ -167,8 +170,10 @@ export function createWithTenantRead(
   router: Pick<ReplicaRouter, "pick">,
   onUnavailable: ReplicaPolicy,
   lifecycle?: ContextLifecycle,
+  guard?: (placement: Placement) => void,
 ) {
   async function forPlacement<T>(placement: Placement, work: (db: ReadContext) => Promise<T>, afterWrite = false, session?: ReadSession): Promise<T> {
+    guard?.(placement);
     requireActive(placement);
     const primary = pools.node(placement.databaseId);
     let handle = afterWrite ? undefined : (session?.handle ?? (await router.pick(placement.databaseId)));

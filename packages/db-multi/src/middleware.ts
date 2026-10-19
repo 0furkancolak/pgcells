@@ -27,6 +27,10 @@ export interface RequestDb {
   /** Tenant read queries go to a replica (`readOnly` queries; see `docs/replicas.md`). If a write ran on `tenant` within the same request, the read
    * stays on the primary (read-your-writes); consistency across requests is not guaranteed. */
   readonly tenantRead: ReadContext;
+  /** The tenant's placement, resolved once per scope (the same one the contexts use). */
+  placement(): Promise<Placement>;
+  /** The region this application runs in (`createDatabase({ region })`); `undefined` in single-region mode. */
+  readonly region: string | undefined;
 }
 
 export type { Database };
@@ -58,6 +62,8 @@ export function createDbScope(db: Database, tenant: string | (() => string), pla
     get tenantId() {
       return resolveTenant();
     },
+    placement: target,
+    region: db.region,
     tenant: context(async (work) => db.withTenant.forPlacement(await target(), work, markWrite)),
     tenantRead: Object.freeze<ReadContext>({
       query: async (query, values) => {
@@ -131,4 +137,33 @@ export function dbMiddleware<C extends MiddlewareContext>(middlewareOptions: DbM
    * after the load balancer stopped sending traffic. Does nothing with `perRequest` (each request closes its own pool). */
   const shutdown = async (closeOptions: CloseOptions = {}): Promise<CloseResult> => (shared ? shared.close({ drain: true, ...closeOptions }) : { drained: true, remaining: 0 });
   return Object.assign(handler, { shutdown });
+}
+
+export interface RegionGuardOptions<C> {
+  /** `"421"` (default): answer `421 Misdirected Request` with the tenant's region. `"redirect"`: answer `307` to `locate(placement, c)`; without a URL it falls back to 421. */
+  mode?: "421" | "redirect";
+  /** The URL that serves this tenant from its own region (for `"redirect"`); keep the path and query yourself. */
+  locate?: (placement: Placement, c: C) => string | undefined;
+  /** Called for every request that reached the wrong region (metrics, logging). */
+  onWrongRegion?: (placement: Placement, c: C) => void;
+}
+
+/** Stops a request that reached the wrong region before it touches any tenant data: if the tenant's node is in another region than `createDatabase({ region })`, it answers
+ * `421` (or a `307` to `locate`) instead of talking to a database across an ocean. Without a `region` on the database, or for a node with no region, it does nothing.
+ * Mount it after `dbMiddleware`; it resolves the placement, which the request's contexts reuse. Errors while resolving (unknown tenant, database down) are not caught here. */
+export function regionGuard<C extends { get(key: "db"): RequestDb }>(options: RegionGuardOptions<C> = {}) {
+  const { mode = "421", locate, onWrongRegion } = options;
+  return async (c: C, next: () => Promise<void>): Promise<Response | void> => {
+    const db = c.get("db");
+    if (db.region === undefined) return next();
+    const placement = await db.placement();
+    if (!placement.region || placement.region === db.region) return next();
+    onWrongRegion?.(placement, c);
+    const target = mode === "redirect" ? locate?.(placement, c) : undefined;
+    if (target) return new Response(null, { status: 307, headers: { location: target, "x-pgcells-region": placement.region } });
+    return new Response(JSON.stringify({ error: "WRONG_REGION", region: placement.region }), {
+      status: 421,
+      headers: { "content-type": "application/json", "x-pgcells-region": placement.region },
+    });
+  };
 }

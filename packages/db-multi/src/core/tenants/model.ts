@@ -63,6 +63,26 @@ export function quoteIdentifier(value: string): string {
   return `"${value.replaceAll('"', '""')}"`;
 }
 
+/** Region and residency zone names: lowercase DNS-like labels (`eu-west`, `us-east-1`, `eu`), the same shape the platform tables check. */
+const regionNamePattern = /^[a-z][a-z0-9-]{0,62}$/;
+export function validateRegionName(value: string, what = "region"): string {
+  if (!regionNamePattern.test(value)) throw new AppError("INVALID_CONFIG", `${what} must be 1-63 characters of a-z, 0-9 and hyphens, starting with a letter (e.g. eu-west)`);
+  return value;
+}
+/** Node labels: `key=value` pairs; keys and values are short lowercase tokens so they are safe to store and to compare. */
+const labelPattern = /^[a-z][a-z0-9_.-]{0,62}$/;
+export function validateLabels(labels: Readonly<Record<string, string>>): Record<string, string> {
+  for (const [key, value] of Object.entries(labels))
+    if (!labelPattern.test(key) || !/^[a-z0-9][a-z0-9_.-]{0,62}$/.test(value)) throw new AppError("INVALID_CONFIG", `label ${key}=${value} must use lowercase letters, digits, "_", "." and "-" (at most 63 characters)`);
+  return { ...labels };
+}
+/** Where a tenant may live: any of these narrows automatic placement, and `zone` is written to the placement as its residency. */
+export interface PlacementRequest {
+  region?: string;
+  zone?: string;
+  labels?: Readonly<Record<string, string>>;
+}
+
 export const statusSchema = z.enum(["provisioning", "active", "maintenance", "migrating", "failed"]);
 /** The stored placement; the schema name must be the name derived from the tenant ID and kind. */
 export const placementSchema = z
@@ -74,10 +94,14 @@ export const placementSchema = z
     status: statusSchema,
     schemaVersion: z.number().int().nonnegative(),
     placementVersion: z.number().int().positive(),
+    /** The residency zone the tenant is bound to (`null`: unrestricted). */
+    residencyZone: z.string().nullable().optional(),
+    /** The region of the node the tenant lives on (`null`: the node has no region). Absent in placements cached before regions existed. */
+    region: z.string().nullable().optional(),
   })
   .refine((value) => value.schemaName === tenantSchema(value.tenantId, value.kind));
 /** Columns matching `placementSchema`; queries give the platform.placements table the alias `p`. */
-export const placementColumns = `p.tenant_id AS "tenantId", p.database_id AS "databaseId", p.kind, p.schema_name AS "schemaName", p.status, p.schema_version AS "schemaVersion", p.placement_version AS "placementVersion"`;
+export const placementColumns = `p.tenant_id AS "tenantId", p.database_id AS "databaseId", p.kind, p.schema_name AS "schemaName", p.status, p.schema_version AS "schemaVersion", p.placement_version AS "placementVersion", p.residency_zone AS "residencyZone", (SELECT n.region FROM platform.nodes n WHERE n.database_id=p.database_id) AS "region"`;
 
 export type Status = z.infer<typeof statusSchema>;
 export type Placement = z.infer<typeof placementSchema>;

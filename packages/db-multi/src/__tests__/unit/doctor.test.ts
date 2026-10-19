@@ -7,9 +7,11 @@ import { fakeDriver } from "../fixtures/fake-driver";
 
 let port = 8000;
 let runtimePid = 1000;
-function fixture(options: { broken?: boolean; pooled?: boolean; identity?: string; consoleMode?: string; timeouts?: string; console?: Record<string, string | null>; maxConnections?: number } = {}) {
+function fixture(options: { broken?: boolean; pooled?: boolean; identity?: string; consoleMode?: string; timeouts?: string; console?: Record<string, string | null>; maxConnections?: number; override?: (text: string) => unknown[] | undefined } = {}) {
   const fake = fakeDriver((text, _params, pool) => {
     if (!/^\s*(SELECT|SHOW)\b/.test(text)) throw new Error("Doctor must be read-only");
+    const overridden = options.override?.(text);
+    if (overridden) return overridden;
     if (options.broken) throw new Error(`credentials leaked: ${pool.url}`);
     if (text.includes("pg_backend_pid")) {
       // Runtime URL'si sınaması: aynı havuzda iki bağlantı; pooler tek oturum, doğrudan her sorguda yeni oturum.
@@ -20,7 +22,8 @@ function fixture(options: { broken?: boolean; pooled?: boolean; identity?: strin
     if (text.includes("set_config")) return [{}];
     if (text.includes("_migrations"))
       return (text.includes("_node_") ? nodeMigrations : platformMigrations).map(({ id, checksum }) => ({ id, checksum }));
-    if (text.includes("__moved_") || text.includes("platform.moves")) return [];
+    if (text.includes("__moved_") || text.includes("platform.moves") || text.includes("information_schema.columns") || text.includes("region IS NOT NULL")) return [];
+    if (text.includes("platform.replicas")) return [{ nodeRegion: null, region: null }];
     if (text.includes("platform.nodes") || text.includes("node_identity"))
       return [{ database_id: options.identity ?? "db0" }];
     if (text.includes("AS invalid")) return [{ invalid: 0, inactive: 0, moving: 0, recovery: 0 }];
@@ -152,4 +155,43 @@ test("the connection budget needs the pooler console: without --pgbouncer-url it
   await expect(doctor(app, { budget: { appInstances: 1, poolMax: 1, poolers: 1 } })).rejects.toMatchObject({ code: "USAGE" });
   await app.close();
   expect((await run({}, "postgres://admin:private-secret@localhost/pgbouncer")).checks.map((item) => item.check)).not.toContain("connection_budget");
+});
+
+/** A healthy fixture whose answer to some queries is replaced. */
+async function runWith(override: (text: string) => unknown[] | undefined, doctorOptions: { appRegion?: string } = {}) {
+  const { app } = fixture({ override });
+  const result = await doctor(app, doctorOptions);
+  await app.close();
+  return result;
+}
+
+test("directory_pii lists personal-looking columns on platform.tenants without failing doctor", async () => {
+  const found = await runWith((text) => (text.includes("information_schema.columns") ? [{ name: "owner_email" }, { name: "phone" }] : undefined));
+  const check = found.checks.find((item) => item.check === "directory_pii");
+  expect(check).toMatchObject({ target: "platform", ok: true });
+  expect(check?.detail).toContain("owner_email, phone");
+  expect(check?.detail).toContain("db0's region");
+  expect(found.ok).toBe(true);
+  expect((await runWith(() => undefined)).checks.find((item) => item.check === "directory_pii")?.detail).toBe("No personal-data-looking columns on platform.tenants.");
+});
+
+test("app_region: informational without --app-region, a failure when no database lives in the application's region", async () => {
+  const hasRegions = (text: string) => (text.includes("region IS NOT NULL") ? [{ databaseId: "db0", region: "eu-west" }] : undefined);
+  const appRegion = async (options: { appRegion?: string }, override: typeof hasRegions = hasRegions) => {
+    const result = await runWith(override, options);
+    return { check: result.checks.find((item) => item.check === "app_region"), ok: result.ok };
+  };
+  const informational = await appRegion({});
+  expect(informational.check?.ok).toBe(true);
+  expect(informational.check?.detail).toContain("--app-region");
+  const local = await appRegion({ appRegion: "eu-west" });
+  expect(local.check?.ok).toBe(true);
+  expect(local.check?.detail).toContain("db0");
+  const missing = await appRegion({ appRegion: "us-east" });
+  expect(missing.check?.ok).toBe(false);
+  expect(missing.check?.detail).toContain("WRONG_REGION");
+  expect(missing.ok).toBe(false);
+  const unused = await appRegion({}, () => undefined);
+  expect(unused.check?.ok).toBe(true);
+  expect(unused.check?.detail).toContain("not in use");
 });

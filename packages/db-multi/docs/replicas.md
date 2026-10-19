@@ -81,6 +81,19 @@ Each replica opens its own pool and gets `poolMax` connections: per process a to
 - There is no hidden per-query retry.
 - Management (`migrate`, `bootstrap`, `provision`…) ignores `DATABASE_REPLICA_URLS`.
 
+## Replica locality
+
+An application opened with `createDatabase({ region: "eu-west" })` reads only from replicas that live in `eu-west`; if none of them is usable, the [fallback policy](#fallback-policy) decides (primary or `REPLICA_UNAVAILABLE`), and it never reads from another region's replica. Without `region` nothing changes: any usable replica is used.
+
+A replica lives in its database's region unless the directory says otherwise:
+
+```sh
+bun run tools replica set db1#2 --region us-east   # the second replica of db1 in DATABASE_REPLICA_URLS
+bun run tools replica set db1#2 --region none      # back to the database's region
+```
+
+The regions are read from the directory (`platform.replicas`, `platform.nodes`) at most once per `replicaStatusMs` and only by regional applications; if they cannot be read the application uses no replica rather than guessing. A replica of a database that has no region has no known location and is not excluded. Choosing a replica by residency *zone* is not implemented; region is the unit. Function: `setReplicaRegion(m, "db1#2", region)` (`@0furkancolak/pgcells/tools`).
+
 ## Tools
 
 ### `replicas`
@@ -89,7 +102,7 @@ Each replica opens its own pool and gets `poolMax` connections: per process a to
 bun run cli replicas
 ```
 
-It polls every replica in `DATABASE_REPLICA_URLS` without consulting the cache and writes a single JSON: `{ ok, maxLagMs, replicas: [{ databaseId, replica, up, inRecovery, lagMs, usable, error? }] }`. `replica` is a 1-based number by config order; **the URL, host, user and password are not in any output**. If a replica is down, is not a replica, or the lag exceeds `replicaMaxLagMs`, `ok: false` and the exit code is 1 (can be used as a health check). The function equivalent is `replicaReport(m)` (`@0furkancolak/pgcells/tools`); inside the application, `db.replicas()`.
+It polls every replica in `DATABASE_REPLICA_URLS` without consulting the cache and writes a single JSON: `{ ok, maxLagMs, replicas: [{ databaseId, replica, up, inRecovery, lagMs, usable, region, error? }] }`; `region` is where the directory says the replica lives (`null` if unknown). `replica` is a 1-based number by config order; **the URL, host, user and password are not in any output**. If a replica is down, is not a replica, or the lag exceeds `replicaMaxLagMs`, `ok: false` and the exit code is 1 (can be used as a health check). The function equivalent is `replicaReport(m)` (`@0furkancolak/pgcells/tools`); inside the application, `db.replicas()`.
 
 ### `doctor` checks
 
@@ -102,6 +115,7 @@ For each replica the target is a sequence number like `db0#1`; all are read-only
 | `replica_lag` | The lag is above `replicaMaxLagMs` or unknown |
 | `replica_identity` | The replica is not a copy of its own primary (`platform.node_identity` points at another database) |
 | `replica_runtime_timeouts` | The database default timeouts did not arrive with the replication; run `bootstrap` on the primary |
+| `replica_region` | Information only, always `ok`: where the directory says the replica lives (see [Replica locality](#replica-locality)), with a warning when that differs from its database's region |
 | `replica_pooled` | Information only, always `ok`: the detail says whether the replica runtime URL goes to a transaction-mode pooler (the runtime does not enforce it; a direct URL does not make doctor fail) |
 
 ### Backup and export from a replica (`--from-replica`)

@@ -3,13 +3,13 @@
 import { boundedInteger, type Config, type DatabaseNode, type DatabaseOptions, loadConfig, PLATFORM_DATABASE_ID, replicaPolicy, runtimeSettings } from "./config";
 import { createPools, type PoolStats, reportSpan, type SpanHandler, spanner } from "./database";
 import type { Driver } from "./driver";
-import { AppError, databaseUnavailable, errorCode } from "./errors";
+import { AppError, databaseUnavailable, errorCode, WrongRegionError } from "./errors";
 import { PLATFORM_SCHEMA } from "./sql/query";
 import { type ContextLifecycle, createWithTenant, createWithTenantRead, runContext, type TenantContext } from "./tenants/context";
-import type { Placement } from "./tenants/model";
+import { type Placement, validateRegionName } from "./tenants/model";
 import { checkDatabases } from "./tenants/nodes";
 import { createPlatform } from "./tenants/placement";
-import { createReplicaRouter } from "./tenants/replicas";
+import { createReplicaRegionLoader, createReplicaRouter } from "./tenants/replicas";
 import { usesTransactionPooler } from "./tenants/pooler";
 
 export interface RuntimeOptions extends DatabaseOptions {
@@ -20,6 +20,11 @@ export interface RuntimeOptions extends DatabaseOptions {
   /** `verified` (default): `ready()` checks that every DB is behind a transaction-mode pooler, otherwise `POOLER_REQUIRED`.
    * `assumed`: the check is skipped (environments that cannot be probed, e.g. unverified Hyperdrive); ensuring a pooler is in place is the application's job. */
   pooler?: "verified" | "assumed";
+  /** The region this application runs in (e.g. `eu-west`). A tenant whose node is in another region is refused with `WRONG_REGION` instead of being served across
+   * regions. Without it nothing is checked (single-region mode); a tenant on a node with no region is always served. */
+  region?: string;
+  /** Called with the placement each time a tenant context is refused for `WRONG_REGION` (metrics, logging). It cannot allow the request: the error is thrown after it returns. */
+  onWrongRegion?: (placement: Placement) => void;
 }
 
 const PLACEMENT_CACHE_ENTRIES = 10_000;
@@ -76,10 +81,21 @@ function activePlacementCache(maxEntries: number, ttlMs: number, staleMs = 0) {
 }
 
 /** Bun: once per process. Workers: once per request with `{ poolMax: 1 }` (sockets cannot outlive a request). */
-function openDatabase(input: Config, { driver, onSpan, pooler = "verified", replicaOnUnavailable, ...options }: RuntimeOptions) {
+function openDatabase(input: Config, { driver, onSpan, pooler = "verified", replicaOnUnavailable, region, onWrongRegion, ...options }: RuntimeOptions) {
   // The requirement can be skipped only by a deliberate decision: a typo or an unexpected value does not silently disable the check.
   if (pooler !== "verified" && pooler !== "assumed") throw new AppError("INVALID_CONFIG", 'pooler must be "verified" or "assumed"');
   const onUnavailable = replicaPolicy(replicaOnUnavailable);
+  if (region !== undefined) validateRegionName(region);
+  /** Refuses a placement whose node is in another region (a node with no region is never refused). */
+  const guard =
+    region === undefined
+      ? undefined
+      : (placement: Placement) => {
+          if (placement.region && placement.region !== region) {
+            onWrongRegion?.(placement);
+            throw new WrongRegionError(placement.tenantId, placement.region, region);
+          }
+        };
   const config = runtimeSettings(input, options);
   // Server-side timeouts are DB defaults (bootstrap): a single query is a single round trip.
   const pools = createPools(config, driver, config.poolMax, { deadlineMs: config.statementTimeoutMs, maxPending: RUNTIME_MAX_PENDING, onSpan });
@@ -89,7 +105,14 @@ function openDatabase(input: Config, { driver, onSpan, pooler = "verified", repl
   // After `migrating`, a move waits longer than `placementCacheMs` (`PLACEMENT_CACHE_MAX_MS`), so the cache never lets any request
   // write to the old DB of the tenant being moved.
   const cache = activePlacementCache(PLACEMENT_CACHE_ENTRIES, config.placementCacheMs, config.staleIfErrorMs);
-  const replicaRouter = createReplicaRouter({ pools, maxLagMs: config.replicaMaxLagMs, statusMs: config.replicaStatusMs });
+  // Replica locality needs the directory's replica regions, but only for an application that has a region.
+  const replicaCounts = Object.fromEntries(config.nodes.filter((node) => node.replicas.length).map((node) => [node.id, node.replicas.length]));
+  const replicaRouter = createReplicaRouter({
+    pools,
+    maxLagMs: config.replicaMaxLagMs,
+    statusMs: config.replicaStatusMs,
+    ...(region !== undefined && { region, regions: createReplicaRegionLoader(pools.platform, replicaCounts, config.replicaStatusMs) }),
+  });
   const hasDirectoryReplicas = config.nodes.some((node) => node.id === PLATFORM_DATABASE_ID && node.replicas.length > 0);
   /** One directory lookup. With db0 replicas an `active` record comes from a usable replica; anything else (not active, not found yet, no usable
    * replica, replica error) is answered by the primary, which is the only authority for `migrating`/`maintenance`. The error policy for tenant reads
@@ -139,9 +162,9 @@ function openDatabase(input: Config, { driver, onSpan, pooler = "verified", repl
   const invalidatePlacement = cache.invalidate;
 
   const lifecycle = createLifecycle(config.tenantMaxInflight);
-  const withTenant = createWithTenant(pools, { get: placement }, lifecycle);
+  const withTenant = createWithTenant(pools, { get: placement }, lifecycle, guard);
   /** `src/queries/tenant/` read queries go to a replica; see `docs/replicas.md`. */
-  const withTenantRead = createWithTenantRead(pools, { get: placement }, replicaRouter, onUnavailable, lifecycle);
+  const withTenantRead = createWithTenantRead(pools, { get: placement }, replicaRouter, onUnavailable, lifecycle, guard);
   /** Replica status (health, lag, availability); probes without consulting the cache. Contains no URL. */
   const replicas = () => replicaRouter.report(config.nodes.map((node) => node.id));
   /** `src/queries/platform/` queries: the platform database (db0, schema `platform`). */
@@ -191,7 +214,7 @@ function openDatabase(input: Config, { driver, onSpan, pooler = "verified", repl
     await pools.close();
     return { drained: remaining === 0, remaining };
   };
-  return { config, pools, platform, placement, invalidatePlacement, withTenant, withTenantRead, replicas, withNode, withPlatform, ready, stats, close };
+  return { config, region, pools, platform, placement, invalidatePlacement, withTenant, withTenantRead, replicas, withNode, withPlatform, ready, stats, close };
 }
 
 export interface CloseOptions {
