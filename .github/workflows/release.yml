@@ -29,7 +29,7 @@ jobs:
       # Opens or updates the "version packages" pull request; when that is merged it runs scripts/publish.sh (changesets/action creates no
       # git tags or GitHub releases when a custom publish command is used; tag the release manually).
       # Needs either npm trusted publishing for @0furkancolak/pgcells* or an NPM_TOKEN secret with publish rights on the @0furkancolak scope.
-      - uses: changesets/action@v1
+      - uses: changesets/action@v2
         with:
           version: bun run version-packages
           publish: bash scripts/publish.sh
