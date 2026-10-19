@@ -15,7 +15,7 @@ jobs:
       pull-requests: write   # the "version packages" pull request
       id-token: write        # npm provenance (GitHub OIDC)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
